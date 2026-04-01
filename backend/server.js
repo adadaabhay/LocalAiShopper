@@ -209,84 +209,174 @@ app.get('/api/scrape', async (req, res) => {
   }
 });
 
+// ============================================================
+// JINA READER: Convert any URL to clean, LLM-friendly markdown
+// ============================================================
+async function jinaRead(url) {
+  if (!url) return 'URL not provided.';
+  try {
+    const response = await fetch(`https://r.jina.ai/${url}`, {
+      headers: {
+        'Authorization': `Bearer ${process.env.JINA_API_KEY}`,
+        'Accept': 'text/markdown',
+        'X-Return-Format': 'markdown'
+      },
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!response.ok) return `Jina read failed (HTTP ${response.status})`;
+    const text = await response.text();
+    return text.slice(0, 20000); // Cap at 20k chars to stay within Gemini token limits
+  } catch (error) {
+    console.error(`Jina Reader Error for ${url}:`, error.message);
+    return `Failed to read page: ${error.message}`;
+  }
+}
+
+// ============================================================
+// DUCKDUCKGO FINDER: Find product URLs across multiple stores
+// ============================================================
+async function findProductURLs(productName) {
+  const sources = [
+    { name: 'Amazon', query: `site:amazon.in ${productName}` },
+    { name: 'Flipkart', query: `site:flipkart.com ${productName}` },
+    { name: 'Croma', query: `site:croma.com ${productName}` },
+    { name: 'Reliance Digital', query: `site:reliancedigital.in ${productName}` },
+    { name: 'Official Brand', query: `official site specifications price ${productName}` },
+  ];
+
+  const results = {};
+  for (const source of sources) {
+    try {
+      const url = await searchDuckDuckGo(source.query);
+      results[source.name] = url;
+      console.log(`[Finder] ${source.name}: ${url || 'Not found'}`);
+    } catch (e) {
+      results[source.name] = null;
+    }
+  }
+  return results;
+}
+
+// ============================================================
+// MAIN AGENTIC PIPELINE: Compare Product
+// ============================================================
 app.post('/api/v1/compare-product', async (req, res) => {
   const { product_name, user_persona } = req.body;
   if (!product_name) return res.status(400).json({ error: 'product_name is required' });
 
+  console.log(`\n🔍 [Agent] Starting analysis for: "${product_name}" | Persona: ${user_persona}`);
+
   try {
-    // 1. Compass (DDGS equivalent in Node)
-    const amz_url = await searchDuckDuckGo(`site:amazon.in ${product_name}`);
-    const flp_url = await searchDuckDuckGo(`site:flipkart.com ${product_name}`);
-    const off_url = await searchDuckDuckGo(`official specifications ${product_name}`);
+    // ── STEP 1: THE FINDER (DuckDuckGo) ──────────────────────
+    console.log('[Step 1] Finding product URLs across 5 stores...');
+    const urls = await findProductURLs(product_name);
 
-    // 2. Scout (Playwright fetches)
-    const [amz_data, flp_data, off_data] = await Promise.all([
-      scrapeJSONLD(amz_url),
-      scrapeJSONLD(flp_url),
-      scrapeJSONLD(off_url)
-    ]);
-
-    const search_context = JSON.stringify({
-      amazon_scraped_data: [{ url: amz_url, extracted_dom: amz_data }],
-      flipkart_scraped_data: [{ url: flp_url, extracted_dom: flp_data }],
-      official_brand_data: [{ url: off_url, extracted_dom: off_data }]
+    // ── STEP 2: THE CLEANER (Jina Reader) ────────────────────
+    console.log('[Step 2] Cleaning pages via Jina Reader...');
+    const readPromises = Object.entries(urls).map(async ([store, url]) => {
+      if (!url) return { store, url: null, content: `${store} URL not found via search.` };
+      const content = await jinaRead(url);
+      console.log(`  ✓ ${store}: ${content.length} chars extracted`);
+      return { store, url, content };
     });
+    const scrapedData = await Promise.all(readPromises);
 
-    // 3. Brain (Gemini Intelligence)
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // Build context for Gemini
+    const search_context = scrapedData.map(d =>
+      `=== ${d.store} ===\nURL: ${d.url || 'Not Found'}\n${d.content}\n`
+    ).join('\n---\n');
+
+    // ── STEP 3: THE BRAIN (Gemini AI) ────────────────────────
+    console.log('[Step 3] Sending to Gemini Brain for analysis...');
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+
     const prompt = `
-        You are the highly advanced 'ShopSense Brain' AI.
-        Product requested: "${product_name}"
-        User Persona: "${user_persona}"
-        
-        Live scraped data:
-        ${search_context}
-        
-        TASKS: Output perfectly valid JSON matching the exact schema provided.
-        1. product_title and inferred_variant.
-        2. sticker_price for both platforms (integer).
-        3. Determine best bank offer for landed_cost and discount_applied.
-        4. fine_print_warning (string or null).
-        5. persona_score (0.0-10.0) and persona_verdict.
-        6. winner ("Amazon", "Flipkart", or "Tie").
-        7. spec_rating (0.0-10.0) and spec_summary.
-        8. 2 market competitors with estimated_price and why_better.
-        9. trust_warnings list if Amazon/Flipkart sellers are lying vs Official Site.
-        
-        SCHEMA:
-        {
-            "product_title": "string",
-            "inferred_variant": "string",
-            "amazon_data": { "sticker_price": integer, "landed_cost": integer, "discount_applied": "string", "fine_print_warning": "string or null" },
-            "flipkart_data": { "sticker_price": integer, "landed_cost": integer, "discount_applied": "string", "fine_print_warning": "string or null" },
-            "persona_score": float, "persona_verdict": "string", "winner": "string", "spec_rating": float, "spec_summary": "string",
-            "competitors": [{ "name": "string", "estimated_price": integer, "why_better": "string" }],
-            "trust_warnings": ["string"]
-        }
-    `;
+You are the "ShopSense Brain" — the world's most advanced price comparison AI.
+
+PRODUCT: "${product_name}"
+USER PERSONA: "${user_persona}"
+
+Below is LIVE DATA scraped from real e-commerce stores. Each section contains cleaned markdown from the actual product page:
+
+${search_context}
+
+══════════════════════════════════════════
+YOUR CRITICAL MISSION:
+══════════════════════════════════════════
+
+1. **IDENTIFY**: Find the exact product_title and inferred_variant (e.g., "128GB Base, Midnight Black").
+
+2. **PRICING**: For BOTH Amazon and Flipkart:
+   - Extract the EXACT sticker_price (MRP or listed price, raw integer in ₹).
+   - Scan the page data for the ABSOLUTE BEST instant discount or bank offer visible on the page (e.g., "Flat ₹3000 off with HDFC Bank Credit Card," "10% instant discount with SBI").
+   - Calculate landed_cost = sticker_price - best_discount_found.
+   - In discount_applied, write EXACTLY what you found (e.g., "-₹4000 via HDFC Bank Offer detected on page").
+   - If no discount found, write "No offer detected".
+
+3. **FINE PRINT**: Check for anti-consumer warnings:
+   - "Replacement Only" instead of refund
+   - "No Returns" on the listing
+   - Any misleading claims
+   - Return null if the listing is clean.
+
+4. **PERSONA SCORE**: Rate 0.0-10.0 how well this product fits the user persona. Write a sharp 2-sentence persona_verdict.
+
+5. **WINNER**: Strictly based on final landed_cost + return policy, declare "Amazon", "Flipkart", or "Tie".
+
+6. **SPECS**: Give an objective spec_rating (0.0-10.0) and a 1-sentence spec_summary covering the key hardware facts.
+
+7. **COMPETITORS**: Suggest exactly 2 real alternative products currently sold in India with estimated_price (integer ₹) and a 1-sentence why_better.
+
+8. **TRUST CHECK**: Cross-reference specs from Official Brand data against Amazon/Flipkart. If sellers are exaggerating specs, log warnings. If specs match, return empty array.
+
+OUTPUT FORMAT: Return ONLY valid JSON (no markdown, no backticks, no explanation):
+{
+    "product_title": "string",
+    "inferred_variant": "string",
+    "amazon_data": {
+        "sticker_price": integer,
+        "landed_cost": integer,
+        "discount_applied": "string",
+        "fine_print_warning": "string or null"
+    },
+    "flipkart_data": {
+        "sticker_price": integer,
+        "landed_cost": integer,
+        "discount_applied": "string",
+        "fine_print_warning": "string or null"
+    },
+    "persona_score": float,
+    "persona_verdict": "string",
+    "winner": "string",
+    "spec_rating": float,
+    "spec_summary": "string",
+    "competitors": [
+        { "name": "string", "estimated_price": integer, "why_better": "string" },
+        { "name": "string", "estimated_price": integer, "why_better": "string" }
+    ],
+    "trust_warnings": ["string"]
+}`;
 
     const result = await model.generateContent(prompt);
     const text = result.response.text();
-    // Clean JSON from potential markdowns
     const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
     const resultData = JSON.parse(jsonStr);
 
-    // --- AUTOMATION: Update Local DB based on search ---
+    console.log(`✅ [Agent] Winner: ${resultData.winner} | Amazon: ₹${resultData.amazon_data.landed_cost} | Flipkart: ₹${resultData.flipkart_data.landed_cost}`);
+
+    // ── STEP 4: AUTOMATION (Update DB) ───────────────────────
     try {
         const timestamp = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-        
-        // 1. Log Activity
+
         db.prepare('INSERT INTO activities (action, target, time) VALUES (?, ?, ?)')
           .run('AI Analysis', resultData.product_title || product_name, `Today, ${timestamp}`);
 
-        // 2. Log Product result
         const landedCost = resultData.winner === 'Flipkart' ? resultData.flipkart_data.landed_cost : resultData.amazon_data.landed_cost;
         const stickerPrice = resultData.winner === 'Flipkart' ? resultData.flipkart_data.sticker_price : resultData.amazon_data.sticker_price;
-        
+
         db.prepare('INSERT INTO products (name, price, true_value, deception_index, market_match, image_url, savings) VALUES (?, ?, ?, ?, ?, ?, ?)')
           .run(resultData.product_title, stickerPrice, landedCost, Math.floor(Math.random() * 10), Math.floor(Math.random() * 20), '', stickerPrice - landedCost);
 
-        // 3. Update Trends
         const existingTrend = db.prepare('SELECT id FROM trends WHERE keyword = ?').get(product_name);
         if (existingTrend) {
             db.prepare('UPDATE trends SET volume = "Very High", direction = "Up" WHERE id = ?').run(existingTrend.id);
