@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { ShieldAlert, Bell, AlertTriangle, ArrowDown, Info, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
+import { API_BASE } from '../config';
 
 export default function AlertsPage() {
     const [data, setData] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        fetch('/api/alerts')
+        fetch(`${API_BASE}/api/alerts`)
             .then(res => {
                 if (!res.ok) throw new Error('Failed to fetch data');
                 return res.json();

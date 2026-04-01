@@ -3,6 +3,7 @@ import { Search, Filter, TrendingUp, Star, MapPin, Loader } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useSearch } from '../context/SearchContext';
 import toast from 'react-hot-toast';
+import { API_BASE } from '../config';
 
 interface ExploreItem {
     id: string;
@@ -20,7 +21,7 @@ export default function ExplorePage() {
     const { searchQuery } = useSearch();
 
     useEffect(() => {
-        fetch('/api/explore')
+        fetch(`${API_BASE}/api/explore`)
             .then(res => {
                 if (!res.ok) throw new Error('Failed to fetch data');
                 return res.json();

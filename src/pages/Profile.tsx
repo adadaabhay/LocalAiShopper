@@ -1,9 +1,9 @@
-
 import React, { useState, useEffect } from 'react';
 import { User, Mail, Shield, Key, Bell, Loader, Palette, Settings } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useTheme } from '../context/ThemeContext';
 import toast from 'react-hot-toast';
+import { API_BASE } from '../config';
 
 export default function ProfilePage() {
     const [data, setData] = useState<any>(null);
@@ -11,7 +11,7 @@ export default function ProfilePage() {
     const { theme, setTheme } = useTheme();
 
     useEffect(() => {
-        fetch('/api/user')
+        fetch(`${API_BASE}/api/user`)
             .then(res => {
                 if (!res.ok) throw new Error('Failed to fetch data');
                 return res.json();

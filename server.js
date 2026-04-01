@@ -1,8 +1,12 @@
 import express from 'express';
 import Database from 'better-sqlite3';
+import cors from 'cors';
 import { scrapeProduct } from './src/services/scraper.js';
+
 const app = express();
-const port = 5000;
+app.use(cors());
+
+const port = process.env.PORT || 5000;
 
 // Initialize in-memory SQLite database
 const db = new Database(':memory:');
@@ -204,5 +208,5 @@ app.get('/api/price-history', (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`Backend server listening at http://localhost:${port}`);
+  console.log(`Backend server listening at port ${port}`);
 });

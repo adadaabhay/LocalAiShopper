@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { Activity, Activity as ActivityIcon, LogIn, Search } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
+import { API_BASE } from '../config';
 
 export default function ActivityPage() {
     const [data, setData] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        fetch('/api/activity')
+        fetch(`${API_BASE}/api/activity`)
             .then(res => {
                 if (!res.ok) throw new Error('Failed to fetch data');
                 return res.json();

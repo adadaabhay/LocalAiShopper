@@ -1,27 +1,28 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowDownRight, ArrowUpRight, TrendingDown, TrendingUp, Minus } from 'lucide-react';
+import { Brain, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
+import { API_BASE } from '../config';
 
 export default function TrendsPage() {
     const [data, setData] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        fetch('/api/trends')
-            .then(res => {
-                if (!res.ok) throw new Error('Failed to fetch data');
-                return res.json();
-            })
-            .then(items => {
+        const fetchData = async () => {
+            try {
+                const response = await fetch(`${API_BASE}/api/trends`);
+                if (!response.ok) throw new Error('Failed to fetch data');
+                const items = await response.json();
                 setData(items);
-                setLoading(false);
-            })
-            .catch(err => {
+            } catch (err) {
                 console.error(err);
                 toast.error('Failed to load trends');
+            } finally {
                 setLoading(false);
-            });
+            }
+        };
+        fetchData();
     }, []);
 
     return (
