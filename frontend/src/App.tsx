@@ -7,6 +7,12 @@ import Layout from './components/Layout';
 import Home from './pages/Home';
 import MarketAnalysisPage from './pages/MarketAnalysis';
 import PriceHistoryPage from './pages/PriceHistory';
+import Explore from './pages/Explore';
+import Trends from './pages/Trends';
+import Alerts from './pages/Alerts';
+import Messages from './pages/Messages';
+import Activity from './pages/Activity';
+import Profile from './pages/Profile';
 
 // Wrapper component to handle routing animations
 function AnimatedRoutes() {
@@ -23,8 +29,14 @@ function AnimatedRoutes() {
           <Layout>
             <Routes>
               <Route path="/" element={<Home />} />
+              <Route path="/explore" element={<Explore />} />
               <Route path="/market-analysis" element={<MarketAnalysisPage />} />
               <Route path="/price-history" element={<PriceHistoryPage />} />
+              <Route path="/trends" element={<Trends />} />
+              <Route path="/alerts" element={<Alerts />} />
+              <Route path="/messages" element={<Messages />} />
+              <Route path="/activity" element={<Activity />} />
+              <Route path="/profile" element={<Profile />} />
               {/* Fallback inside dashboard */}
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>
@@ -41,3 +53,4 @@ function AnimatedRoutes() {
 export default function App() {
   return <AnimatedRoutes />;
 }
+

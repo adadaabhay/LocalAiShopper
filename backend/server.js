@@ -11,7 +11,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+// Individual agent keys are initialized in the AGENTS object below
 
 const port = process.env.PORT || 5000;
 
@@ -209,9 +210,21 @@ app.get('/api/scrape', async (req, res) => {
   }
 });
 
-// ============================================================
-// JINA READER: Convert any URL to clean, LLM-friendly markdown
-// ============================================================
+// ══════════════════════════════════════════════════════════════
+// DISTRIBUTED MICRO-AGENT ARCHITECTURE
+// Each Gemini key handles ONE specific job — no rate limits!
+// ══════════════════════════════════════════════════════════════
+
+const AGENTS = {
+  amazonExtractor:  new GoogleGenerativeAI(process.env.GEMINI_KEY_1),   // Key 1: Amazon price extraction
+  flipkartExtractor: new GoogleGenerativeAI(process.env.GEMINI_KEY_2),  // Key 2: Flipkart price extraction
+  officialExtractor: new GoogleGenerativeAI(process.env.GEMINI_KEY_3),  // Key 3: Official brand site specs
+  retailExtractor:  new GoogleGenerativeAI(process.env.GEMINI_KEY_4),   // Key 4: Croma + Reliance + Vijay Sales
+  brain:            new GoogleGenerativeAI(process.env.GEMINI_KEY_5),   // Key 5: Final comparison & verdict
+  backup:           new GoogleGenerativeAI(process.env.GEMINI_KEY_6),   // Key 6: Fallback for any failures
+};
+
+// ── JINA READER ──────────────────────────────────────────────
 async function jinaRead(url) {
   if (!url) return 'URL not provided.';
   try {
@@ -221,115 +234,179 @@ async function jinaRead(url) {
         'Accept': 'text/markdown',
         'X-Return-Format': 'markdown'
       },
-      signal: AbortSignal.timeout(15000)
+      signal: AbortSignal.timeout(20000)
     });
     if (!response.ok) return `Jina read failed (HTTP ${response.status})`;
     const text = await response.text();
-    return text.slice(0, 20000); // Cap at 20k chars to stay within Gemini token limits
+    return text.slice(0, 15000);
   } catch (error) {
-    console.error(`Jina Reader Error for ${url}:`, error.message);
-    return `Failed to read page: ${error.message}`;
+    console.error(`  ✗ Jina Error for ${url}:`, error.message);
+    return `Failed to read: ${error.message}`;
   }
 }
 
-// ============================================================
-// DUCKDUCKGO FINDER: Find product URLs across multiple stores
-// ============================================================
+// ── DUCKDUCKGO FINDER (7 Sources) ────────────────────────────
 async function findProductURLs(productName) {
   const sources = [
     { name: 'Amazon', query: `site:amazon.in ${productName}` },
     { name: 'Flipkart', query: `site:flipkart.com ${productName}` },
     { name: 'Croma', query: `site:croma.com ${productName}` },
     { name: 'Reliance Digital', query: `site:reliancedigital.in ${productName}` },
-    { name: 'Official Brand', query: `official site specifications price ${productName}` },
+    { name: 'Vijay Sales', query: `site:vijaysales.com ${productName}` },
+    { name: 'Official Brand', query: `official site ${productName} specifications price buy` },
   ];
 
   const results = {};
-  for (const source of sources) {
-    try {
+  // Run all searches in parallel for speed
+  const searchResults = await Promise.allSettled(
+    sources.map(async (source) => {
       const url = await searchDuckDuckGo(source.query);
-      results[source.name] = url;
-      console.log(`[Finder] ${source.name}: ${url || 'Not found'}`);
-    } catch (e) {
-      results[source.name] = null;
+      return { name: source.name, url };
+    })
+  );
+
+  for (const result of searchResults) {
+    if (result.status === 'fulfilled') {
+      results[result.value.name] = result.value.url;
+      console.log(`  [Finder] ${result.value.name}: ${result.value.url || 'Not found'}`);
     }
   }
   return results;
 }
 
-// ============================================================
-// MAIN AGENTIC PIPELINE: Compare Product
-// ============================================================
+// ── MICRO-AGENT: Extract pricing from a single store ─────────
+async function extractPricing(agentInstance, storeName, pageContent, url) {
+  if (!pageContent || pageContent.includes('not found') || pageContent.includes('Failed')) {
+    return { store: storeName, url, price: null, offers: [], raw: `${storeName} data unavailable.` };
+  }
+
+  try {
+    const model = agentInstance.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const result = await model.generateContent(`
+You are a price extraction bot. Extract pricing data from this ${storeName} product page.
+
+PAGE CONTENT:
+${pageContent}
+
+Return ONLY valid JSON (no markdown):
+{
+  "store": "${storeName}",
+  "product_name": "exact product title found",
+  "mrp": integer or null,
+  "sale_price": integer or null,
+  "bank_offers": ["list of bank/card offers found on the page"],
+  "best_offer_value": integer (estimated ₹ savings from best offer) or 0,
+  "return_policy": "string describing return/refund policy" or "Not found",
+  "seller_name": "string" or "Unknown",
+  "in_stock": true or false,
+  "key_specs": "1-sentence hardware summary"
+}`);
+
+    const text = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+    return { store: storeName, url, ...JSON.parse(text) };
+  } catch (error) {
+    console.error(`  ✗ [${storeName} Extractor] Error:`, error.message);
+    return { store: storeName, url, price: null, error: error.message };
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// MAIN AGENTIC PIPELINE
+// ══════════════════════════════════════════════════════════════
 app.post('/api/v1/compare-product', async (req, res) => {
   const { product_name, user_persona } = req.body;
   if (!product_name) return res.status(400).json({ error: 'product_name is required' });
 
-  console.log(`\n🔍 [Agent] Starting analysis for: "${product_name}" | Persona: ${user_persona}`);
+  const startTime = Date.now();
+  console.log(`\n${'═'.repeat(60)}`);
+  console.log(`🔍 SHOPSENSE AGENT PIPELINE`);
+  console.log(`   Product: "${product_name}" | Persona: ${user_persona}`);
+  console.log(`${'═'.repeat(60)}`);
 
   try {
-    // ── STEP 1: THE FINDER (DuckDuckGo) ──────────────────────
-    console.log('[Step 1] Finding product URLs across 5 stores...');
+    // ── STEP 1: THE FINDER (DuckDuckGo — 6 sources) ─────────
+    console.log('\n[Step 1] 🌐 Finding product across 6 stores...');
     const urls = await findProductURLs(product_name);
 
-    // ── STEP 2: THE CLEANER (Jina Reader) ────────────────────
-    console.log('[Step 2] Cleaning pages via Jina Reader...');
-    const readPromises = Object.entries(urls).map(async ([store, url]) => {
-      if (!url) return { store, url: null, content: `${store} URL not found via search.` };
-      const content = await jinaRead(url);
-      console.log(`  ✓ ${store}: ${content.length} chars extracted`);
-      return { store, url, content };
-    });
-    const scrapedData = await Promise.all(readPromises);
+    // ── STEP 2: THE CLEANER (Jina Reader — parallel) ─────────
+    console.log('\n[Step 2] 📄 Cleaning pages via Jina Reader...');
+    const storeNames = Object.keys(urls);
+    const jinaResults = await Promise.allSettled(
+      storeNames.map(async (store) => {
+        if (!urls[store]) return { store, content: `${store} URL not found.` };
+        const content = await jinaRead(urls[store]);
+        console.log(`  ✓ ${store}: ${content.length} chars`);
+        return { store, content };
+      })
+    );
 
-    // Build context for Gemini
-    const search_context = scrapedData.map(d =>
-      `=== ${d.store} ===\nURL: ${d.url || 'Not Found'}\n${d.content}\n`
-    ).join('\n---\n');
+    const cleanedPages = {};
+    for (const r of jinaResults) {
+      if (r.status === 'fulfilled') cleanedPages[r.value.store] = r.value.content;
+    }
 
-    // ── STEP 3: THE BRAIN (Gemini AI) ────────────────────────
-    console.log('[Step 3] Sending to Gemini Brain for analysis...');
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    // ── STEP 3: MICRO-AGENTS (4 keys extract in parallel) ────
+    console.log('\n[Step 3] 🤖 Deploying 4 extraction micro-agents in parallel...');
+    const [amazonResult, flipkartResult, officialResult, retailResult] = await Promise.allSettled([
+      // Key 1 → Amazon
+      extractPricing(AGENTS.amazonExtractor, 'Amazon', cleanedPages['Amazon'], urls['Amazon']),
+      // Key 2 → Flipkart
+      extractPricing(AGENTS.flipkartExtractor, 'Flipkart', cleanedPages['Flipkart'], urls['Flipkart']),
+      // Key 3 → Official Brand
+      extractPricing(AGENTS.officialExtractor, 'Official Brand', cleanedPages['Official Brand'], urls['Official Brand']),
+      // Key 4 → Croma + Reliance + Vijay Sales (combined)
+      extractPricing(AGENTS.retailExtractor, 'Retail Stores',
+        [cleanedPages['Croma'], cleanedPages['Reliance Digital'], cleanedPages['Vijay Sales']].filter(Boolean).join('\n---NEXT STORE---\n'),
+        [urls['Croma'], urls['Reliance Digital'], urls['Vijay Sales']].filter(Boolean).join(', ')
+      ),
+    ]);
 
-    const prompt = `
+    const extractedData = {
+      amazon: amazonResult.status === 'fulfilled' ? amazonResult.value : { store: 'Amazon', error: 'Extraction failed' },
+      flipkart: flipkartResult.status === 'fulfilled' ? flipkartResult.value : { store: 'Flipkart', error: 'Extraction failed' },
+      official: officialResult.status === 'fulfilled' ? officialResult.value : { store: 'Official', error: 'Extraction failed' },
+      retail: retailResult.status === 'fulfilled' ? retailResult.value : { store: 'Retail', error: 'Extraction failed' },
+    };
+
+    console.log('  ✓ All 4 micro-agents completed.');
+
+    // ── STEP 4: THE BRAIN (Key 5 — Final Analysis) ───────────
+    console.log('\n[Step 4] 🧠 Sending to Brain for final verdict...');
+    const brainModel = AGENTS.brain.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+    const brainPrompt = `
 You are the "ShopSense Brain" — the world's most advanced price comparison AI.
 
 PRODUCT: "${product_name}"
 USER PERSONA: "${user_persona}"
 
-Below is LIVE DATA scraped from real e-commerce stores. Each section contains cleaned markdown from the actual product page:
+Below is STRUCTURED DATA extracted by 4 specialized agents from REAL e-commerce stores:
 
-${search_context}
+=== AMAZON DATA ===
+${JSON.stringify(extractedData.amazon, null, 2)}
+
+=== FLIPKART DATA ===
+${JSON.stringify(extractedData.flipkart, null, 2)}
+
+=== OFFICIAL BRAND SITE DATA ===
+${JSON.stringify(extractedData.official, null, 2)}
+
+=== RETAIL STORES (Croma, Reliance Digital, Vijay Sales) ===
+${JSON.stringify(extractedData.retail, null, 2)}
 
 ══════════════════════════════════════════
-YOUR CRITICAL MISSION:
+YOUR MISSION: Synthesize ALL extracted data into the final comparison.
 ══════════════════════════════════════════
 
-1. **IDENTIFY**: Find the exact product_title and inferred_variant (e.g., "128GB Base, Midnight Black").
+RULES:
+- Use REAL extracted prices. If an agent returned actual pricing, use it exactly.
+- For amazon_data and flipkart_data sticker_price: use the MRP or sale_price from extracted data.
+- For landed_cost: apply the best bank offer found by the extractors (sticker_price - best_offer_value).
+- For discount_applied: cite the specific offer from the extractor's bank_offers list.
+- Cross-reference Official Brand specs against Amazon/Flipkart claims for trust_warnings.
+- Consider Croma/Reliance/Vijay Sales prices when determining the true market price landscape.
 
-2. **PRICING**: For BOTH Amazon and Flipkart:
-   - Extract the EXACT sticker_price (MRP or listed price, raw integer in ₹).
-   - Scan the page data for the ABSOLUTE BEST instant discount or bank offer visible on the page (e.g., "Flat ₹3000 off with HDFC Bank Credit Card," "10% instant discount with SBI").
-   - Calculate landed_cost = sticker_price - best_discount_found.
-   - In discount_applied, write EXACTLY what you found (e.g., "-₹4000 via HDFC Bank Offer detected on page").
-   - If no discount found, write "No offer detected".
-
-3. **FINE PRINT**: Check for anti-consumer warnings:
-   - "Replacement Only" instead of refund
-   - "No Returns" on the listing
-   - Any misleading claims
-   - Return null if the listing is clean.
-
-4. **PERSONA SCORE**: Rate 0.0-10.0 how well this product fits the user persona. Write a sharp 2-sentence persona_verdict.
-
-5. **WINNER**: Strictly based on final landed_cost + return policy, declare "Amazon", "Flipkart", or "Tie".
-
-6. **SPECS**: Give an objective spec_rating (0.0-10.0) and a 1-sentence spec_summary covering the key hardware facts.
-
-7. **COMPETITORS**: Suggest exactly 2 real alternative products currently sold in India with estimated_price (integer ₹) and a 1-sentence why_better.
-
-8. **TRUST CHECK**: Cross-reference specs from Official Brand data against Amazon/Flipkart. If sellers are exaggerating specs, log warnings. If specs match, return empty array.
-
-OUTPUT FORMAT: Return ONLY valid JSON (no markdown, no backticks, no explanation):
+OUTPUT ONLY VALID JSON (no markdown, no backticks):
 {
     "product_title": "string",
     "inferred_variant": "string",
@@ -357,30 +434,28 @@ OUTPUT FORMAT: Return ONLY valid JSON (no markdown, no backticks, no explanation
     "trust_warnings": ["string"]
 }`;
 
-    // Gemini call with retry for rate limits (429)
     let resultData;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        console.log(`  [Gemini] Attempt ${attempt}/3...`);
-        const result = await model.generateContent(prompt);
-        const text = result.response.text();
-        const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
-        resultData = JSON.parse(jsonStr);
-        break; // Success — exit retry loop
-      } catch (geminiError) {
-        const is429 = geminiError.message?.includes('429') || geminiError.message?.includes('Too Many Requests') || geminiError.status === 429;
-        if (is429 && attempt < 3) {
-          console.log(`  ⏳ Rate limited. Waiting 20 seconds before retry...`);
-          await new Promise(r => setTimeout(r, 20000));
-        } else {
-          throw geminiError; // Non-429 error or final attempt
-        }
-      }
+    try {
+      const result = await brainModel.generateContent(brainPrompt);
+      const text = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+      resultData = JSON.parse(text);
+    } catch (brainError) {
+      // Fallback to backup key (Key 6)
+      console.log('  ⚠️ Brain (Key 5) failed. Switching to Backup (Key 6)...');
+      const backupModel = AGENTS.backup.getGenerativeModel({ model: 'gemini-2.0-flash' });
+      const result = await backupModel.generateContent(brainPrompt);
+      const text = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+      resultData = JSON.parse(text);
     }
 
-    console.log(`✅ [Agent] Winner: ${resultData.winner} | Amazon: ₹${resultData.amazon_data.landed_cost} | Flipkart: ₹${resultData.flipkart_data.landed_cost}`);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(`\n${'═'.repeat(60)}`);
+    console.log(`✅ ANALYSIS COMPLETE in ${elapsed}s`);
+    console.log(`   Winner: ${resultData.winner}`);
+    console.log(`   Amazon: ₹${resultData.amazon_data.landed_cost} | Flipkart: ₹${resultData.flipkart_data.landed_cost}`);
+    console.log(`${'═'.repeat(60)}\n`);
 
-    // ── STEP 4: AUTOMATION (Update DB) ───────────────────────
+    // ── STEP 5: AUTOMATION (Update DB) ───────────────────────
     try {
         const timestamp = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
@@ -406,7 +481,7 @@ OUTPUT FORMAT: Return ONLY valid JSON (no markdown, no backticks, no explanation
     res.json(resultData);
 
   } catch (error) {
-    console.error('Comparison Agent Error:', error);
+    console.error('🚨 Pipeline Error:', error);
     res.status(500).json({ error: 'AI Agent analysis failed', details: error.message });
   }
 });
