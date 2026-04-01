@@ -96,3 +96,52 @@ export async function scrapeProduct(url) {
         if (browser) await browser.close();
     }
 }
+
+export async function searchDuckDuckGo(query) {
+    let browser;
+    try {
+        browser = await chromium.launch({ headless: true });
+        const page = await browser.newPage();
+        await page.goto(`https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`);
+        const results = await page.evaluate(() => {
+            const links = Array.from(document.querySelectorAll('.result__a'));
+            return links.map(link => ({
+                title: link.innerText,
+                href: link.href
+            })).slice(0, 1);
+        });
+        return results[0]?.href || null;
+    } catch (error) {
+        console.error('DuckDuckGo search error:', error);
+        return null;
+    } finally {
+        if (browser) await browser.close();
+    }
+}
+
+export async function scrapeJSONLD(url) {
+    if (!url) return "URL not provided.";
+    let browser;
+    try {
+        browser = await chromium.launch({ headless: true });
+        const context = await browser.newContext();
+        const page = await context.newPage();
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+        
+        let data;
+        try {
+            data = await page.evaluate(() => {
+                const scripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
+                return scripts.map(s => s.innerText).join('\n');
+            });
+        } catch (e) {
+            data = await page.evaluate(() => document.body.innerText.slice(0, 15000));
+        }
+        return data || "No data found.";
+    } catch (error) {
+        console.error(`Scrape JSONLD Error for ${url}:`, error);
+        return `Scrape Failed: ${error.message}`;
+    } finally {
+        if (browser) await browser.close();
+    }
+}

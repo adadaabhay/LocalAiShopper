@@ -1,10 +1,17 @@
 import express from 'express';
 import Database from 'better-sqlite3';
 import cors from 'cors';
-import { scrapeProduct } from './src/services/scraper.js';
+import { scrapeProduct, searchDuckDuckGo, scrapeJSONLD } from './src/services/scraper.js';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const app = express();
 app.use(cors());
+app.use(express.json());
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const port = process.env.PORT || 5000;
 
@@ -199,6 +206,74 @@ app.get('/api/scrape', async (req, res) => {
   } catch (error) {
     console.error('Scraping error:', error);
     res.status(500).json({ error: 'Failed to scrape product', details: error.message });
+  }
+});
+
+app.post('/api/v1/compare-product', async (req, res) => {
+  const { product_name, user_persona } = req.body;
+  if (!product_name) return res.status(400).json({ error: 'product_name is required' });
+
+  try {
+    // 1. Compass (DDGS equivalent in Node)
+    const amz_url = await searchDuckDuckGo(`site:amazon.in ${product_name}`);
+    const flp_url = await searchDuckDuckGo(`site:flipkart.com ${product_name}`);
+    const off_url = await searchDuckDuckGo(`official specifications ${product_name}`);
+
+    // 2. Scout (Playwright fetches)
+    const [amz_data, flp_data, off_data] = await Promise.all([
+      scrapeJSONLD(amz_url),
+      scrapeJSONLD(flp_url),
+      scrapeJSONLD(off_url)
+    ]);
+
+    const search_context = JSON.stringify({
+      amazon_scraped_data: [{ url: amz_url, extracted_dom: amz_data }],
+      flipkart_scraped_data: [{ url: flp_url, extracted_dom: flp_data }],
+      official_brand_data: [{ url: off_url, extracted_dom: off_data }]
+    });
+
+    // 3. Brain (Gemini Intelligence)
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const prompt = `
+        You are the highly advanced 'ShopSense Brain' AI.
+        Product requested: "${product_name}"
+        User Persona: "${user_persona}"
+        
+        Live scraped data:
+        ${search_context}
+        
+        TASKS: Output perfectly valid JSON matching the exact schema provided.
+        1. product_title and inferred_variant.
+        2. sticker_price for both platforms (integer).
+        3. Determine best bank offer for landed_cost and discount_applied.
+        4. fine_print_warning (string or null).
+        5. persona_score (0.0-10.0) and persona_verdict.
+        6. winner ("Amazon", "Flipkart", or "Tie").
+        7. spec_rating (0.0-10.0) and spec_summary.
+        8. 2 market competitors with estimated_price and why_better.
+        9. trust_warnings list if Amazon/Flipkart sellers are lying vs Official Site.
+        
+        SCHEMA:
+        {
+            "product_title": "string",
+            "inferred_variant": "string",
+            "amazon_data": { "sticker_price": integer, "landed_cost": integer, "discount_applied": "string", "fine_print_warning": "string or null" },
+            "flipkart_data": { "sticker_price": integer, "landed_cost": integer, "discount_applied": "string", "fine_print_warning": "string or null" },
+            "persona_score": float, "persona_verdict": "string", "winner": "string", "spec_rating": float, "spec_summary": "string",
+            "competitors": [{ "name": "string", "estimated_price": integer, "why_better": "string" }],
+            "trust_warnings": ["string"]
+        }
+    `;
+
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+    // Clean JSON from potential markdowns
+    const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    res.json(JSON.parse(jsonStr));
+
+  } catch (error) {
+    console.error('Comparison Agent Error:', error);
+    res.status(500).json({ error: 'AI Agent analysis failed', details: error.message });
   }
 });
 

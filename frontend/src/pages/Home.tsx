@@ -3,6 +3,7 @@ import { Search, Loader2, ShieldAlert, Zap, Target, Award, CheckCircle2 } from '
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { useSearch } from '../context/SearchContext';
+import { API_BASE } from '../config';
 
 export default function Home() {
     // 1. COMMAND BAR STATE
@@ -11,7 +12,7 @@ export default function Home() {
     // Core Engine State mapped to global Context
     const { searchQuery, setSearchQuery, productData: data, setProductData: setData, isLoading: loading, setIsLoading: setLoading } = useSearch();
 
-    const API_URL = "http://localhost:8000/api/v1/compare-product";
+    const API_URL = `${API_BASE}/api/v1/compare-product`;
 
     const handleAnalyze = async (e?: React.FormEvent) => {
         if (e) e.preventDefault();
