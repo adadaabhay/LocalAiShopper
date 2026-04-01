@@ -275,14 +275,12 @@ async function findProductURLs(productName) {
 }
 
 // ── MICRO-AGENT: Extract pricing from a single store ─────────
-async function extractPricing(agentInstance, storeName, pageContent, url) {
+async function extractPricing(agentInstance, backupInstance, storeName, pageContent, url) {
   if (!pageContent || pageContent.includes('not found') || pageContent.includes('Failed')) {
     return { store: storeName, url, price: null, offers: [], raw: `${storeName} data unavailable.` };
   }
 
-  try {
-    const model = agentInstance.getGenerativeModel({ model: 'gemini-2.0-flash' });
-    const result = await model.generateContent(`
+  const prompt = `
 You are a price extraction bot. Extract pricing data from this ${storeName} product page.
 
 PAGE CONTENT:
@@ -295,19 +293,32 @@ Return ONLY valid JSON (no markdown):
   "mrp": integer or null,
   "sale_price": integer or null,
   "bank_offers": ["list of bank/card offers found on the page"],
-  "best_offer_value": integer (estimated ₹ savings from best offer) or 0,
+  "best_offer_value": integer (estimated savings from best offer) or 0,
   "return_policy": "string describing return/refund policy" or "Not found",
   "seller_name": "string" or "Unknown",
   "in_stock": true or false,
   "key_specs": "1-sentence hardware summary"
-}`);
+}`;
 
-    const text = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-    return { store: storeName, url, ...JSON.parse(text) };
-  } catch (error) {
-    console.error(`  ✗ [${storeName} Extractor] Error:`, error.message);
-    return { store: storeName, url, price: null, error: error.message };
+  // Try primary key, then backup key
+  for (const [label, ai] of [['Primary', agentInstance], ['Backup', backupInstance]]) {
+    try {
+      const model = ai.getGenerativeModel({ model: 'gemini-2.0-flash' });
+      const result = await model.generateContent(prompt);
+      const text = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+      console.log(`  ✓ [${storeName}] Extracted via ${label} key`);
+      return { store: storeName, url, ...JSON.parse(text) };
+    } catch (error) {
+      const is429 = error.message?.includes('429') || error.message?.includes('Too Many');
+      if (is429 && label === 'Primary') {
+        console.log(`  ⏳ [${storeName}] Rate limited on ${label}, waiting 15s then trying Backup...`);
+        await new Promise(r => setTimeout(r, 15000));
+        continue;
+      }
+      console.error(`  ✗ [${storeName} ${label}] Error:`, error.message);
+    }
   }
+  return { store: storeName, url, price: null, error: 'All keys exhausted' };
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -345,27 +356,27 @@ app.post('/api/v1/compare-product', async (req, res) => {
       if (r.status === 'fulfilled') cleanedPages[r.value.store] = r.value.content;
     }
 
-    // ── STEP 3: MICRO-AGENTS (4 keys extract in parallel) ────
-    console.log('\n[Step 3] 🤖 Deploying 4 extraction micro-agents in parallel...');
-    const [amazonResult, flipkartResult, officialResult, retailResult] = await Promise.allSettled([
-      // Key 1 → Amazon
-      extractPricing(AGENTS.amazonExtractor, 'Amazon', cleanedPages['Amazon'], urls['Amazon']),
-      // Key 2 → Flipkart
-      extractPricing(AGENTS.flipkartExtractor, 'Flipkart', cleanedPages['Flipkart'], urls['Flipkart']),
-      // Key 3 → Official Brand
-      extractPricing(AGENTS.officialExtractor, 'Official Brand', cleanedPages['Official Brand'], urls['Official Brand']),
-      // Key 4 → Croma + Reliance + Vijay Sales (combined)
-      extractPricing(AGENTS.retailExtractor, 'Retail Stores',
-        [cleanedPages['Croma'], cleanedPages['Reliance Digital'], cleanedPages['Vijay Sales']].filter(Boolean).join('\n---NEXT STORE---\n'),
-        [urls['Croma'], urls['Reliance Digital'], urls['Vijay Sales']].filter(Boolean).join(', ')
-      ),
-    ]);
+    // ── STEP 3: MICRO-AGENTS (extract sequentially with delays) ──
+    console.log('\n[Step 3] 🤖 Deploying extraction micro-agents...');
+
+    const amazonResult = await extractPricing(AGENTS.amazonExtractor, AGENTS.backup, 'Amazon', cleanedPages['Amazon'], urls['Amazon']);
+    await new Promise(r => setTimeout(r, 2000)); // small delay between agents
+
+    const flipkartResult = await extractPricing(AGENTS.flipkartExtractor, AGENTS.backup, 'Flipkart', cleanedPages['Flipkart'], urls['Flipkart']);
+    await new Promise(r => setTimeout(r, 2000));
+
+    const officialResult = await extractPricing(AGENTS.officialExtractor, AGENTS.backup, 'Official Brand', cleanedPages['Official Brand'], urls['Official Brand']);
+    await new Promise(r => setTimeout(r, 2000));
+
+    const retailContent = [cleanedPages['Croma'], cleanedPages['Reliance Digital'], cleanedPages['Vijay Sales']].filter(Boolean).join('\n---NEXT STORE---\n');
+    const retailUrls = [urls['Croma'], urls['Reliance Digital'], urls['Vijay Sales']].filter(Boolean).join(', ');
+    const retailResult = await extractPricing(AGENTS.retailExtractor, AGENTS.backup, 'Retail Stores', retailContent, retailUrls);
 
     const extractedData = {
-      amazon: amazonResult.status === 'fulfilled' ? amazonResult.value : { store: 'Amazon', error: 'Extraction failed' },
-      flipkart: flipkartResult.status === 'fulfilled' ? flipkartResult.value : { store: 'Flipkart', error: 'Extraction failed' },
-      official: officialResult.status === 'fulfilled' ? officialResult.value : { store: 'Official', error: 'Extraction failed' },
-      retail: retailResult.status === 'fulfilled' ? retailResult.value : { store: 'Retail', error: 'Extraction failed' },
+      amazon: amazonResult,
+      flipkart: flipkartResult,
+      official: officialResult,
+      retail: retailResult,
     };
 
     console.log('  ✓ All 4 micro-agents completed.');

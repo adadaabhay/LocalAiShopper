@@ -98,31 +98,31 @@ export async function scrapeProduct(url) {
 }
 
 export async function searchDuckDuckGo(query) {
-    const userAgents = [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'
-    ];
-    let browser;
     try {
-        browser = await chromium.launch({ headless: true });
-        const context = await browser.newContext({ userAgent: userAgents[Math.floor(Math.random() * userAgents.length)] });
-        const page = await context.newPage();
-        
-        // Use the lite version of DDG for better stability on serverless
-        await page.goto(`https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`, { waitUntil: 'domcontentloaded', timeout: 20000 });
-        
-        const href = await page.evaluate(() => {
-            const resultLinks = document.querySelectorAll('.result__a');
-            return resultLinks.length > 0 ? resultLinks[0].href : null;
+        // Use DuckDuckGo's lightweight HTML endpoint — no browser needed!
+        const response = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            },
+            signal: AbortSignal.timeout(10000)
         });
+        const html = await response.text();
         
-        return href;
-    } catch (error) {
-        console.error('DuckDuckGo search error:', error);
+        // Extract the first result URL from the HTML
+        const match = html.match(/class="result__a"[^>]*href="([^"]+)"/);
+        if (match && match[1]) {
+            // DDG wraps URLs in a redirect — extract the actual URL
+            const rawUrl = match[1];
+            if (rawUrl.startsWith('//duckduckgo.com/l/?')) {
+                const urlParam = new URL('https:' + rawUrl).searchParams.get('uddg');
+                return urlParam || rawUrl;
+            }
+            return rawUrl;
+        }
         return null;
-    } finally {
-        if (browser) await browser.close();
+    } catch (error) {
+        console.error('  ✗ DDG search error:', error.message);
+        return null;
     }
 }
 
