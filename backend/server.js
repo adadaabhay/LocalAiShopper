@@ -1,4 +1,4 @@
-import express from 'express';
+﻿import express from 'express';
 import Database from 'better-sqlite3';
 import cors from 'cors';
 import { scrapeProduct, searchDuckDuckGo, scrapeJSONLD } from './src/services/scraper.js';
@@ -210,298 +210,153 @@ app.get('/api/scrape', async (req, res) => {
   }
 });
 
-// ══════════════════════════════════════════════════════════════
-// DISTRIBUTED MICRO-AGENT ARCHITECTURE
-// Each Gemini key handles ONE specific job — no rate limits!
-// ══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// 3-PROVIDER TURBO ARCHITECTURE
+// Groq  = Ultra-fast extraction (4 parallel agents)
+// Gemini = Final Brain synthesis
+// OpenRouter = Backup for any failures
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-const AGENTS = {
-  amazonExtractor:  new GoogleGenerativeAI(process.env.GEMINI_KEY_1),   // Key 1: Amazon price extraction
-  flipkartExtractor: new GoogleGenerativeAI(process.env.GEMINI_KEY_2),  // Key 2: Flipkart price extraction
-  officialExtractor: new GoogleGenerativeAI(process.env.GEMINI_KEY_3),  // Key 3: Official brand site specs
-  retailExtractor:  new GoogleGenerativeAI(process.env.GEMINI_KEY_4),   // Key 4: Croma + Reliance + Vijay Sales
-  brain:            new GoogleGenerativeAI(process.env.GEMINI_KEY_5),   // Key 5: Final comparison & verdict
-  backup:           new GoogleGenerativeAI(process.env.GEMINI_KEY_6),   // Key 6: Fallback for any failures
-};
+const gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// ── JINA READER ──────────────────────────────────────────────
-async function jinaRead(url) {
-  if (!url) return 'URL not provided.';
-  try {
-    const response = await fetch(`https://r.jina.ai/${url}`, {
-      headers: {
-        'Authorization': `Bearer ${process.env.JINA_API_KEY}`,
-        'Accept': 'text/markdown',
-        'X-Return-Format': 'markdown'
-      },
-      signal: AbortSignal.timeout(20000)
-    });
-    if (!response.ok) return `Jina read failed (HTTP ${response.status})`;
-    const text = await response.text();
-    return text.slice(0, 15000);
-  } catch (error) {
-    console.error(`  ✗ Jina Error for ${url}:`, error.message);
-    return `Failed to read: ${error.message}`;
-  }
+async function groqChat(prompt) {
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: [{ role: 'user', content: prompt }], temperature: 0.1, max_tokens: 2000 }),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!res.ok) throw new Error(`Groq ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return (await res.json()).choices[0].message.content;
 }
 
-// ── DUCKDUCKGO FINDER (7 Sources) ────────────────────────────
-async function findProductURLs(productName) {
+async function openRouterChat(prompt) {
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'google/gemini-2.0-flash-exp:free', messages: [{ role: 'user', content: prompt }], temperature: 0.1 }),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return (await res.json()).choices[0].message.content;
+}
+
+async function jinaRead(url) {
+  if (!url) return '';
+  try {
+    const r = await fetch(`https://r.jina.ai/${url}`, {
+      headers: { 'Authorization': `Bearer ${process.env.JINA_API_KEY}`, 'Accept': 'text/markdown', 'X-Return-Format': 'markdown' },
+      signal: AbortSignal.timeout(20000)
+    });
+    if (!r.ok) return '';
+    return (await r.text()).slice(0, 12000);
+  } catch (e) { return ''; }
+}
+
+async function findURLs(productName) {
   const sources = [
-    { name: 'Amazon', query: `site:amazon.in ${productName}` },
-    { name: 'Flipkart', query: `site:flipkart.com ${productName}` },
-    { name: 'Croma', query: `site:croma.com ${productName}` },
-    { name: 'Reliance Digital', query: `site:reliancedigital.in ${productName}` },
-    { name: 'Vijay Sales', query: `site:vijaysales.com ${productName}` },
-    { name: 'Official Brand', query: `official site ${productName} specifications price buy` },
+    { name: 'Amazon', q: `site:amazon.in ${productName}` },
+    { name: 'Flipkart', q: `site:flipkart.com ${productName}` },
+    { name: 'Croma', q: `site:croma.com ${productName}` },
+    { name: 'Reliance Digital', q: `site:reliancedigital.in ${productName}` },
+    { name: 'Vijay Sales', q: `site:vijaysales.com ${productName}` },
+    { name: 'Official', q: `official site ${productName} specs price` },
   ];
-
   const results = {};
-  // Run all searches in parallel for speed
-  const searchResults = await Promise.allSettled(
-    sources.map(async (source) => {
-      const url = await searchDuckDuckGo(source.query);
-      return { name: source.name, url };
-    })
-  );
-
-  for (const result of searchResults) {
-    if (result.status === 'fulfilled') {
-      results[result.value.name] = result.value.url;
-      console.log(`  [Finder] ${result.value.name}: ${result.value.url || 'Not found'}`);
+  const all = await Promise.allSettled(sources.map(async s => ({ name: s.name, url: await searchDuckDuckGo(s.q) })));
+  for (const r of all) {
+    if (r.status === 'fulfilled') {
+      results[r.value.name] = r.value.url;
+      console.log(`  ${r.value.url ? 'âœ“' : 'âœ—'} ${r.value.name}: ${r.value.url || 'Not found'}`);
     }
   }
   return results;
 }
 
-// ── MICRO-AGENT: Extract pricing from a single store ─────────
-async function extractPricing(agentInstance, backupInstance, storeName, pageContent, url) {
-  if (!pageContent || pageContent.includes('not found') || pageContent.includes('Failed')) {
-    return { store: storeName, url, price: null, offers: [], raw: `${storeName} data unavailable.` };
-  }
-
-  const prompt = `
-You are a price extraction bot. Extract pricing data from this ${storeName} product page.
-
-PAGE CONTENT:
-${pageContent}
-
-Return ONLY valid JSON (no markdown):
-{
-  "store": "${storeName}",
-  "product_name": "exact product title found",
-  "mrp": integer or null,
-  "sale_price": integer or null,
-  "bank_offers": ["list of bank/card offers found on the page"],
-  "best_offer_value": integer (estimated savings from best offer) or 0,
-  "return_policy": "string describing return/refund policy" or "Not found",
-  "seller_name": "string" or "Unknown",
-  "in_stock": true or false,
-  "key_specs": "1-sentence hardware summary"
-}`;
-
-  // Try primary key, then backup key
-  for (const [label, ai] of [['Primary', agentInstance], ['Backup', backupInstance]]) {
+async function extractWithGroq(store, content, url) {
+  if (!content || content.length < 50) return { store, url, error: 'No data' };
+  const prompt = `Extract pricing from this ${store} page. Return ONLY valid JSON:\n${content.slice(0, 10000)}\n\nJSON: {"store":"${store}","product_name":"string","mrp":int_or_null,"sale_price":int_or_null,"bank_offers":["offer1"],"best_offer_value":int_or_0,"return_policy":"string","in_stock":true,"key_specs":"1-sentence"}`;
+  try {
+    const text = await groqChat(prompt);
+    const parsed = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+    console.log(`  âš¡ ${store}: â‚¹${parsed.sale_price || parsed.mrp || '?'}`);
+    return { store, url, ...parsed };
+  } catch (e) {
     try {
-      const model = ai.getGenerativeModel({ model: 'gemini-2.0-flash' });
-      const result = await model.generateContent(prompt);
-      const text = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-      console.log(`  ✓ [${storeName}] Extracted via ${label} key`);
-      return { store: storeName, url, ...JSON.parse(text) };
-    } catch (error) {
-      const is429 = error.message?.includes('429') || error.message?.includes('Too Many');
-      if (is429 && label === 'Primary') {
-        console.log(`  ⏳ [${storeName}] Rate limited on ${label}, waiting 15s then trying Backup...`);
-        await new Promise(r => setTimeout(r, 15000));
-        continue;
-      }
-      console.error(`  ✗ [${storeName} ${label}] Error:`, error.message);
+      console.log(`  ðŸ”„ ${store}: Groq failed, trying OpenRouter...`);
+      const text = await openRouterChat(prompt);
+      return { store, url, ...JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim()) };
+    } catch (e2) {
+      return { store, url, error: e2.message };
     }
   }
-  return { store: storeName, url, price: null, error: 'All keys exhausted' };
 }
 
-// ══════════════════════════════════════════════════════════════
-// MAIN AGENTIC PIPELINE
-// ══════════════════════════════════════════════════════════════
 app.post('/api/v1/compare-product', async (req, res) => {
   const { product_name, user_persona } = req.body;
   if (!product_name) return res.status(400).json({ error: 'product_name is required' });
-
-  const startTime = Date.now();
-  console.log(`\n${'═'.repeat(60)}`);
-  console.log(`🔍 SHOPSENSE AGENT PIPELINE`);
-  console.log(`   Product: "${product_name}" | Persona: ${user_persona}`);
-  console.log(`${'═'.repeat(60)}`);
+  const t0 = Date.now();
+  console.log(`\n${'â•'.repeat(50)}\nðŸ” TURBO PIPELINE: "${product_name}"\n${'â•'.repeat(50)}`);
 
   try {
-    // ── STEP 1: THE FINDER (DuckDuckGo — 6 sources) ─────────
-    console.log('\n[Step 1] 🌐 Finding product across 6 stores...');
-    const urls = await findProductURLs(product_name);
+    console.log('\n[1] ðŸŒ Finding URLs...');
+    const urls = await findURLs(product_name);
 
-    // ── STEP 2: THE CLEANER (Jina Reader — parallel) ─────────
-    console.log('\n[Step 2] 📄 Cleaning pages via Jina Reader...');
-    const storeNames = Object.keys(urls);
-    const jinaResults = await Promise.allSettled(
-      storeNames.map(async (store) => {
-        if (!urls[store]) return { store, content: `${store} URL not found.` };
-        const content = await jinaRead(urls[store]);
-        console.log(`  ✓ ${store}: ${content.length} chars`);
-        return { store, content };
-      })
-    );
+    console.log('\n[2] ðŸ“„ Jina Reader (parallel)...');
+    const stores = Object.keys(urls).filter(s => urls[s]);
+    const jinaAll = await Promise.allSettled(stores.map(async s => ({ store: s, content: await jinaRead(urls[s]) })));
+    const pages = {};
+    for (const r of jinaAll) if (r.status === 'fulfilled' && r.value.content) { pages[r.value.store] = r.value.content; console.log(`  âœ“ ${r.value.store}: ${r.value.content.length} chars`); }
 
-    const cleanedPages = {};
-    for (const r of jinaResults) {
-      if (r.status === 'fulfilled') cleanedPages[r.value.store] = r.value.content;
-    }
+    console.log('\n[3] âš¡ Groq extractors (parallel)...');
+    const retail = [pages['Croma'], pages['Reliance Digital'], pages['Vijay Sales']].filter(Boolean).join('\n---\n');
+    const [a, f, o, rt] = await Promise.allSettled([
+      extractWithGroq('Amazon', pages['Amazon'], urls['Amazon']),
+      extractWithGroq('Flipkart', pages['Flipkart'], urls['Flipkart']),
+      extractWithGroq('Official', pages['Official'], urls['Official']),
+      extractWithGroq('Retail', retail, 'Multiple stores'),
+    ]);
+    const ext = { amazon: a.value || {}, flipkart: f.value || {}, official: o.value || {}, retail: rt.value || {} };
+    console.log(`  âœ“ Extractors done in ${((Date.now()-t0)/1000).toFixed(1)}s`);
 
-    // ── STEP 3: MICRO-AGENTS (extract sequentially with delays) ──
-    console.log('\n[Step 3] 🤖 Deploying extraction micro-agents...');
+    console.log('\n[4] ðŸ§  Gemini Brain...');
+    const brainPrompt = `Synthesize this e-commerce data. Product: "${product_name}", Persona: "${user_persona}"\n\nAMAZON: ${JSON.stringify(ext.amazon)}\nFLIPKART: ${JSON.stringify(ext.flipkart)}\nOFFICIAL: ${JSON.stringify(ext.official)}\nRETAIL: ${JSON.stringify(ext.retail)}\n\nRules: Use real prices. sticker_price=MRP/sale_price. landed_cost=sticker_price-best_offer_value. Cite bank offers. Cross-check specs.\n\nReturn ONLY JSON: {"product_title":"str","inferred_variant":"str","amazon_data":{"sticker_price":int,"landed_cost":int,"discount_applied":"str","fine_print_warning":"str or null"},"flipkart_data":{"sticker_price":int,"landed_cost":int,"discount_applied":"str","fine_print_warning":"str or null"},"persona_score":float,"persona_verdict":"str","winner":"str","spec_rating":float,"spec_summary":"str","competitors":[{"name":"str","estimated_price":int,"why_better":"str"},{"name":"str","estimated_price":int,"why_better":"str"}],"trust_warnings":["str"]}`;
 
-    const amazonResult = await extractPricing(AGENTS.amazonExtractor, AGENTS.backup, 'Amazon', cleanedPages['Amazon'], urls['Amazon']);
-    await new Promise(r => setTimeout(r, 2000)); // small delay between agents
-
-    const flipkartResult = await extractPricing(AGENTS.flipkartExtractor, AGENTS.backup, 'Flipkart', cleanedPages['Flipkart'], urls['Flipkart']);
-    await new Promise(r => setTimeout(r, 2000));
-
-    const officialResult = await extractPricing(AGENTS.officialExtractor, AGENTS.backup, 'Official Brand', cleanedPages['Official Brand'], urls['Official Brand']);
-    await new Promise(r => setTimeout(r, 2000));
-
-    const retailContent = [cleanedPages['Croma'], cleanedPages['Reliance Digital'], cleanedPages['Vijay Sales']].filter(Boolean).join('\n---NEXT STORE---\n');
-    const retailUrls = [urls['Croma'], urls['Reliance Digital'], urls['Vijay Sales']].filter(Boolean).join(', ');
-    const retailResult = await extractPricing(AGENTS.retailExtractor, AGENTS.backup, 'Retail Stores', retailContent, retailUrls);
-
-    const extractedData = {
-      amazon: amazonResult,
-      flipkart: flipkartResult,
-      official: officialResult,
-      retail: retailResult,
-    };
-
-    console.log('  ✓ All 4 micro-agents completed.');
-
-    // ── STEP 4: THE BRAIN (Key 5 — Final Analysis) ───────────
-    console.log('\n[Step 4] 🧠 Sending to Brain for final verdict...');
-    const brainModel = AGENTS.brain.getGenerativeModel({ model: 'gemini-2.0-flash' });
-
-    const brainPrompt = `
-You are the "ShopSense Brain" — the world's most advanced price comparison AI.
-
-PRODUCT: "${product_name}"
-USER PERSONA: "${user_persona}"
-
-Below is STRUCTURED DATA extracted by 4 specialized agents from REAL e-commerce stores:
-
-=== AMAZON DATA ===
-${JSON.stringify(extractedData.amazon, null, 2)}
-
-=== FLIPKART DATA ===
-${JSON.stringify(extractedData.flipkart, null, 2)}
-
-=== OFFICIAL BRAND SITE DATA ===
-${JSON.stringify(extractedData.official, null, 2)}
-
-=== RETAIL STORES (Croma, Reliance Digital, Vijay Sales) ===
-${JSON.stringify(extractedData.retail, null, 2)}
-
-══════════════════════════════════════════
-YOUR MISSION: Synthesize ALL extracted data into the final comparison.
-══════════════════════════════════════════
-
-RULES:
-- Use REAL extracted prices. If an agent returned actual pricing, use it exactly.
-- For amazon_data and flipkart_data sticker_price: use the MRP or sale_price from extracted data.
-- For landed_cost: apply the best bank offer found by the extractors (sticker_price - best_offer_value).
-- For discount_applied: cite the specific offer from the extractor's bank_offers list.
-- Cross-reference Official Brand specs against Amazon/Flipkart claims for trust_warnings.
-- Consider Croma/Reliance/Vijay Sales prices when determining the true market price landscape.
-
-OUTPUT ONLY VALID JSON (no markdown, no backticks):
-{
-    "product_title": "string",
-    "inferred_variant": "string",
-    "amazon_data": {
-        "sticker_price": integer,
-        "landed_cost": integer,
-        "discount_applied": "string",
-        "fine_print_warning": "string or null"
-    },
-    "flipkart_data": {
-        "sticker_price": integer,
-        "landed_cost": integer,
-        "discount_applied": "string",
-        "fine_print_warning": "string or null"
-    },
-    "persona_score": float,
-    "persona_verdict": "string",
-    "winner": "string",
-    "spec_rating": float,
-    "spec_summary": "string",
-    "competitors": [
-        { "name": "string", "estimated_price": integer, "why_better": "string" },
-        { "name": "string", "estimated_price": integer, "why_better": "string" }
-    ],
-    "trust_warnings": ["string"]
-}`;
-
-    let resultData;
+    let result;
     try {
-      const result = await brainModel.generateContent(brainPrompt);
-      const text = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-      resultData = JSON.parse(text);
-    } catch (brainError) {
-      // Fallback to backup key (Key 6)
-      console.log('  ⚠️ Brain (Key 5) failed. Switching to Backup (Key 6)...');
-      const backupModel = AGENTS.backup.getGenerativeModel({ model: 'gemini-2.0-flash' });
-      const result = await backupModel.generateContent(brainPrompt);
-      const text = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-      resultData = JSON.parse(text);
+      const model = gemini.getGenerativeModel({ model: 'gemini-2.0-flash' });
+      const r = await model.generateContent(brainPrompt);
+      result = JSON.parse(r.response.text().replace(/```json/g, '').replace(/```/g, '').trim());
+    } catch (e) {
+      console.log('  âš ï¸ Gemini failed, using OpenRouter...');
+      const text = await openRouterChat(brainPrompt);
+      result = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
     }
 
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log(`\n${'═'.repeat(60)}`);
-    console.log(`✅ ANALYSIS COMPLETE in ${elapsed}s`);
-    console.log(`   Winner: ${resultData.winner}`);
-    console.log(`   Amazon: ₹${resultData.amazon_data.landed_cost} | Flipkart: ₹${resultData.flipkart_data.landed_cost}`);
-    console.log(`${'═'.repeat(60)}\n`);
+    const elapsed = ((Date.now()-t0)/1000).toFixed(1);
+    console.log(`\n${'â•'.repeat(50)}\nâœ… DONE in ${elapsed}s | Winner: ${result.winner}\n   Amazon â‚¹${result.amazon_data.landed_cost} | Flipkart â‚¹${result.flipkart_data.landed_cost}\n${'â•'.repeat(50)}\n`);
 
-    // ── STEP 5: AUTOMATION (Update DB) ───────────────────────
     try {
-        const timestamp = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      const ts = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      db.prepare('INSERT INTO activities (action, target, time) VALUES (?, ?, ?)').run('AI Analysis', result.product_title || product_name, `Today, ${ts}`);
+      const lc = result.winner === 'Flipkart' ? result.flipkart_data.landed_cost : result.amazon_data.landed_cost;
+      const sp = result.winner === 'Flipkart' ? result.flipkart_data.sticker_price : result.amazon_data.sticker_price;
+      db.prepare('INSERT INTO products (name, price, true_value, deception_index, market_match, image_url, savings) VALUES (?, ?, ?, ?, ?, ?, ?)').run(result.product_title, sp, lc, Math.floor(Math.random()*10), Math.floor(Math.random()*20), '', sp-lc);
+      const t = db.prepare('SELECT id FROM trends WHERE keyword = ?').get(product_name);
+      if (t) db.prepare('UPDATE trends SET volume = "Very High", direction = "Up" WHERE id = ?').run(t.id);
+      else db.prepare('INSERT INTO trends (keyword, direction, volume) VALUES (?, "Up", "High")').run(product_name);
+    } catch (e) { console.error('DB:', e); }
 
-        db.prepare('INSERT INTO activities (action, target, time) VALUES (?, ?, ?)')
-          .run('AI Analysis', resultData.product_title || product_name, `Today, ${timestamp}`);
-
-        const landedCost = resultData.winner === 'Flipkart' ? resultData.flipkart_data.landed_cost : resultData.amazon_data.landed_cost;
-        const stickerPrice = resultData.winner === 'Flipkart' ? resultData.flipkart_data.sticker_price : resultData.amazon_data.sticker_price;
-
-        db.prepare('INSERT INTO products (name, price, true_value, deception_index, market_match, image_url, savings) VALUES (?, ?, ?, ?, ?, ?, ?)')
-          .run(resultData.product_title, stickerPrice, landedCost, Math.floor(Math.random() * 10), Math.floor(Math.random() * 20), '', stickerPrice - landedCost);
-
-        const existingTrend = db.prepare('SELECT id FROM trends WHERE keyword = ?').get(product_name);
-        if (existingTrend) {
-            db.prepare('UPDATE trends SET volume = "Very High", direction = "Up" WHERE id = ?').run(existingTrend.id);
-        } else {
-            db.prepare('INSERT INTO trends (keyword, direction, volume) VALUES (?, "Up", "High")').run(product_name);
-        }
-    } catch (dbError) {
-        console.error('Automation DB Error:', dbError);
-    }
-
-    res.json(resultData);
-
+    res.json(result);
   } catch (error) {
-    console.error('🚨 Pipeline Error:', error);
-    res.status(500).json({ error: 'AI Agent analysis failed', details: error.message });
+    console.error('ðŸš¨ Error:', error);
+    res.status(500).json({ error: 'Analysis failed', details: error.message });
   }
 });
 
 app.get('/api/price-history', (req, res) => {
-  const data = db.prepare('SELECT * FROM price_history ORDER BY id ASC').all();
-  res.json(data);
+  res.json(db.prepare('SELECT * FROM price_history ORDER BY id ASC').all());
 });
 
-app.listen(port, () => {
-  console.log(`Backend server listening at port ${port}`);
-});
+
+app.listen(port, () => console.log(`Backend server listening at port ${port}`));
