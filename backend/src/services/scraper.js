@@ -98,19 +98,26 @@ export async function scrapeProduct(url) {
 }
 
 export async function searchDuckDuckGo(query) {
+    const userAgents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'
+    ];
     let browser;
     try {
         browser = await chromium.launch({ headless: true });
-        const page = await browser.newPage();
-        await page.goto(`https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`);
-        const results = await page.evaluate(() => {
-            const links = Array.from(document.querySelectorAll('.result__a'));
-            return links.map(link => ({
-                title: link.innerText,
-                href: link.href
-            })).slice(0, 1);
+        const context = await browser.newContext({ userAgent: userAgents[Math.floor(Math.random() * userAgents.length)] });
+        const page = await context.newPage();
+        
+        // Use the lite version of DDG for better stability on serverless
+        await page.goto(`https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`, { waitUntil: 'domcontentloaded', timeout: 20000 });
+        
+        const href = await page.evaluate(() => {
+            const resultLinks = document.querySelectorAll('.result__a');
+            return resultLinks.length > 0 ? resultLinks[0].href : null;
         });
-        return results[0]?.href || null;
+        
+        return href;
     } catch (error) {
         console.error('DuckDuckGo search error:', error);
         return null;

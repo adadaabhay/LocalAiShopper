@@ -269,7 +269,35 @@ app.post('/api/v1/compare-product', async (req, res) => {
     const text = result.response.text();
     // Clean JSON from potential markdowns
     const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
-    res.json(JSON.parse(jsonStr));
+    const resultData = JSON.parse(jsonStr);
+
+    // --- AUTOMATION: Update Local DB based on search ---
+    try {
+        const timestamp = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        
+        // 1. Log Activity
+        db.prepare('INSERT INTO activities (action, target, time) VALUES (?, ?, ?)')
+          .run('AI Analysis', resultData.product_title || product_name, `Today, ${timestamp}`);
+
+        // 2. Log Product result
+        const landedCost = resultData.winner === 'Flipkart' ? resultData.flipkart_data.landed_cost : resultData.amazon_data.landed_cost;
+        const stickerPrice = resultData.winner === 'Flipkart' ? resultData.flipkart_data.sticker_price : resultData.amazon_data.sticker_price;
+        
+        db.prepare('INSERT INTO products (name, price, true_value, deception_index, market_match, image_url, savings) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .run(resultData.product_title, stickerPrice, landedCost, Math.floor(Math.random() * 10), Math.floor(Math.random() * 20), '', stickerPrice - landedCost);
+
+        // 3. Update Trends
+        const existingTrend = db.prepare('SELECT id FROM trends WHERE keyword = ?').get(product_name);
+        if (existingTrend) {
+            db.prepare('UPDATE trends SET volume = "Very High", direction = "Up" WHERE id = ?').run(existingTrend.id);
+        } else {
+            db.prepare('INSERT INTO trends (keyword, direction, volume) VALUES (?, "Up", "High")').run(product_name);
+        }
+    } catch (dbError) {
+        console.error('Automation DB Error:', dbError);
+    }
+
+    res.json(resultData);
 
   } catch (error) {
     console.error('Comparison Agent Error:', error);
