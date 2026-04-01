@@ -357,10 +357,26 @@ OUTPUT FORMAT: Return ONLY valid JSON (no markdown, no backticks, no explanation
     "trust_warnings": ["string"]
 }`;
 
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-    const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
-    const resultData = JSON.parse(jsonStr);
+    // Gemini call with retry for rate limits (429)
+    let resultData;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        console.log(`  [Gemini] Attempt ${attempt}/3...`);
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
+        const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        resultData = JSON.parse(jsonStr);
+        break; // Success — exit retry loop
+      } catch (geminiError) {
+        const is429 = geminiError.message?.includes('429') || geminiError.message?.includes('Too Many Requests') || geminiError.status === 429;
+        if (is429 && attempt < 3) {
+          console.log(`  ⏳ Rate limited. Waiting 20 seconds before retry...`);
+          await new Promise(r => setTimeout(r, 20000));
+        } else {
+          throw geminiError; // Non-429 error or final attempt
+        }
+      }
+    }
 
     console.log(`✅ [Agent] Winner: ${resultData.winner} | Amazon: ₹${resultData.amazon_data.landed_cost} | Flipkart: ₹${resultData.flipkart_data.landed_cost}`);
 
