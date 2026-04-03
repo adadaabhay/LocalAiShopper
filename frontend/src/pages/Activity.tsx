@@ -1,71 +1,64 @@
-import React, { useState, useEffect } from 'react';
-import { Activity, Activity as ActivityIcon, LogIn, Search } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
-import toast from 'react-hot-toast';
-import { API_BASE } from '../config';
+import React from 'react';
+import { Link } from 'react-router-dom';
+import { Clock, Trash2 } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { useSearch } from '../context/SearchContext';
 
 export default function ActivityPage() {
-    const [data, setData] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
+  const { recentSearches, clearRecentSearches } = useSearch();
 
-    useEffect(() => {
-        fetch(`${API_BASE}/api/activity`)
-            .then(res => {
-                if (!res.ok) throw new Error('Failed to fetch data');
-                return res.json();
-            })
-            .then(items => {
-                setData(items);
-                setLoading(false);
-            })
-            .catch(err => {
-                console.error(err);
-                toast.error('Failed to load activity feed');
-                setLoading(false);
-            });
-    }, []);
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="flex-1 p-6 max-w-2xl mx-auto w-full pb-16"
+    >
+      <header className="flex flex-wrap items-end justify-between gap-4 mb-8">
+        <div>
+          <p className="ss-eyebrow mb-2">Activity</p>
+          <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">Recent searches</h1>
+          <p className="text-sm text-[var(--color-text-muted)] mt-1">Stored on this device only.</p>
+        </div>
+        {recentSearches.length > 0 ? (
+          <button
+            type="button"
+            onClick={clearRecentSearches}
+            className="text-xs font-mono uppercase tracking-wider text-[var(--color-accent-red)] flex items-center gap-1 hover:underline"
+          >
+            <Trash2 className="w-4 h-4" />
+            Clear
+          </button>
+        ) : null}
+      </header>
 
-    return (
-        <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 0.3 }}
-            className="flex-1 p-6 flex flex-col items-center animate-fade-in gap-6"
-        >
-            <div className="flex flex-col items-center text-center mb-4">
-                <div className="w-16 h-16 rounded-full border-2 border-[var(--color-accent-green)] flex items-center justify-center mb-4">
-                    <Activity className="w-8 h-8 text-[var(--color-accent-green)]" />
-                </div>
-                <h2 className="text-2xl font-bold text-[var(--color-text-primary)]">Activity History</h2>
-                <p className="text-[var(--color-text-secondary)] max-w-md">
-                    Recent queries, analysis results, and system logs.
+      {recentSearches.length === 0 ? (
+        <div className="ss-card p-10 text-center text-[var(--color-text-muted)]">
+          <p className="mb-4">No recent searches.</p>
+          <Link to="/dashboard" className="ss-btn-primary no-underline inline-block text-sm">
+            Find a phone
+          </Link>
+        </div>
+      ) : (
+        <ul className="space-y-2">
+          {recentSearches.map((r) => (
+            <li key={r.id} className="ss-card p-4 flex items-start gap-3">
+              <Clock className="w-5 h-5 text-[var(--color-accent-cyan)] shrink-0 mt-0.5" />
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-[var(--color-text-primary)]">{r.label}</p>
+                <p className="text-xs font-mono text-[var(--color-text-muted)] mt-1">
+                  {new Date(r.at).toLocaleString()}
                 </p>
-            </div>
-
-            {loading ? (
-                <div className="animate-pulse flex flex-col gap-4 w-full max-w-2xl">
-                    <div className="h-16 bg-[var(--color-bg-panel)] rounded-xl"></div>
-                    <div className="h-16 bg-[var(--color-bg-panel)] rounded-xl"></div>
-                </div>
-            ) : (
-                <div className="w-full max-w-2xl space-y-4">
-                    {data.map((act, i) => (
-                        <div key={i} className="glass-panel p-4 rounded-xl border border-[var(--color-border-subtle)] hover:border-[var(--color-accent-green)] transition-colors flex items-center gap-4">
-                            <div className="w-10 h-10 rounded-full bg-[var(--color-bg-panel-hover)] flex items-center justify-center">
-                                {act.action.includes('Logged') ? <LogIn className="w-5 h-5 text-blue-400" /> : <Search className="w-5 h-5 text-[var(--color-accent-green)]" />}
-                            </div>
-                            <div className="flex-1 flex items-center justify-between">
-                                <div>
-                                    <h3 className="text-sm font-medium text-[var(--color-text-primary)]">{act.action}</h3>
-                                    <p className="text-xs text-[var(--color-text-muted)] mt-1 font-mono">{act.target}</p>
-                                </div>
-                                <span className="text-xs text-[var(--color-text-secondary)] border border-[var(--color-border-subtle)] px-3 py-1 rounded-full">{act.time}</span>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            )}
-        </motion.div>
-    );
+              </div>
+              <Link
+                to="/dashboard"
+                className="text-xs font-mono text-[var(--color-accent-cyan)] hover:underline shrink-0"
+              >
+                Re-run
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </motion.div>
+  );
 }

@@ -1,223 +1,595 @@
 import React, { useState } from 'react';
-import { Search, Loader2, ShieldAlert, Zap, Target, Award, CheckCircle2 } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { Link } from 'react-router-dom';
+import { Loader2, BarChart3, TrendingDown, ChevronRight, Search, Smartphone, Laptop, Tablet, CheckCircle2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { useSearch } from '../context/SearchContext';
-import { API_BASE } from '../config';
+import type { PhoneAdvice, DiscoveryResult, DiscoveredVariant } from '@ui/types';
+import type { ProductCategory } from '@ui/constants';
+import {
+  categories,
+  categoryLabels,
+  getRamOptions,
+  getStorageOptions,
+  getDefaultBrands,
+} from '@ui/constants';
+
+const categoryIcons: Record<ProductCategory, React.ElementType> = {
+  phone: Smartphone,
+  laptop: Laptop,
+  tablet: Tablet,
+};
+
+function getBriefLabels(category: ProductCategory) {
+  if (category === 'laptop') {
+    return [
+      { key: 'performance' as const, label: 'Performance' },
+      { key: 'display' as const, label: 'Display' },
+      { key: 'keyboard' as const, label: 'Keyboard' },
+      { key: 'battery' as const, label: 'Battery' },
+      { key: 'buildQuality' as const, label: 'Build' },
+    ];
+  }
+  return [
+    { key: 'camera' as const, label: 'Camera' },
+    { key: 'performance' as const, label: 'Performance' },
+    { key: 'durability' as const, label: 'Durability' },
+    { key: 'companyService' as const, label: 'Brand service' },
+    { key: 'battery' as const, label: 'Battery' },
+  ];
+}
+
+function formatPrice(val: number | null) {
+  if (!val) return '—';
+  return `₹${val.toLocaleString('en-IN')}`;
+}
+
+type WizardStep = 'search' | 'variants' | 'analyze';
 
 export default function Home() {
-    // 1. COMMAND BAR STATE
-    const [persona, setPersona] = useState('General Shopper');
+  const { setPhoneAdvice, addRecentSearch } = useSearch();
 
-    // Core Engine State mapped to global Context
-    const { searchQuery, setSearchQuery, productData: data, setProductData: setData, isLoading: loading, setIsLoading: setLoading } = useSearch();
+  // ── Wizard state ──────────────────────────────────────────────────
+  const [step, setStep] = useState<WizardStep>('search');
+  const [category, setCategory] = useState<ProductCategory>('phone');
+  const [brand, setBrand] = useState(getDefaultBrands('phone')[0]);
+  const [model, setModel] = useState('Galaxy S24');
 
-    const API_URL = `${API_BASE}/api/v1/compare-product`;
+  // ── Discovery (Phase 1) ───────────────────────────────────────────
+  const [discovering, setDiscovering] = useState(false);
+  const [discovery, setDiscovery] = useState<DiscoveryResult | null>(null);
+  const [selectedVariant, setSelectedVariant] = useState<DiscoveredVariant | null>(null);
 
-    const handleAnalyze = async (e?: React.FormEvent) => {
-        if (e) e.preventDefault();
-        if (!searchQuery) {
-            toast.error('Please enter a product URL or name.');
-            return;
-        }
-        setLoading(true);
-        setData(null);
+  // ── Analysis (Phase 2) ────────────────────────────────────────────
+  const [ram, setRam] = useState('8GB');
+  const [storage, setStorage] = useState('256GB');
+  const [budget, setBudget] = useState(50000);
+  const [manualPrice, setManualPrice] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<PhoneAdvice | null>(null);
 
-        try {
-            const res = await fetch(API_URL, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    product_name: searchQuery,
-                    user_persona: persona
-                })
-            });
-            const result = await res.json();
-            if (!res.ok) throw new Error(result.detail || "API Error");
-            setData(result);
-            toast.success("Agentic Piggyback Analysis Complete!", { icon: '🤖' });
-        } catch (error: any) {
-            console.error(error);
-            toast.error(error.message || "Failed to analyze product. Ensure backend is running.");
-        } finally {
-            setLoading(false);
-        }
-    };
+  // ── Handlers ──────────────────────────────────────────────────────
 
-    return (
-        <div className="flex-1 flex flex-col p-6 max-w-[1600px] mx-auto w-full gap-6 text-[var(--color-text-primary)]">
-            {/* COMMAND BAR */}
-            <section className="bg-[var(--color-bg-panel)] rounded-2xl p-4 border border-[var(--color-border-subtle)] shadow-sm flex flex-col md:flex-row gap-4 items-center justify-between z-20">
-                <form onSubmit={handleAnalyze} className="relative w-full xl:w-1/2">
-                    <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Type a product name to search the web (e.g. iPhone 15 128GB)..." className="w-full bg-[var(--color-bg-base)] border border-[var(--color-border-strong)] rounded-xl py-3 pl-12 pr-32 focus:outline-none focus:border-[var(--color-accent-cyan)] transition-colors h-[52px]" />
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] w-5 h-5" />
-                    <button type="submit" disabled={loading} className="absolute right-2 top-[6px] bottom-[6px] bg-[var(--color-accent-blue)] text-white px-6 rounded-lg font-bold hover:bg-blue-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
-                        {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Analyze"}
-                    </button>
-                </form>
-                <div className="flex items-center gap-4 w-full xl:w-auto pb-2 md:pb-0 hide-scrollbar overflow-x-auto">
-                    <div className="flex items-center gap-3 bg-[var(--color-bg-base)] border border-[var(--color-border-subtle)] px-4 py-3 rounded-xl min-w-max h-[52px]">
-                        <Target className="w-5 h-5 text-[var(--color-accent-purple)]" />
-                        <div className="flex flex-col">
-                            <span className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider leading-none mb-1">Persona View</span>
-                            <select value={persona} onChange={(e) => setPersona(e.target.value)} className="bg-transparent border-none outline-none text-sm font-bold text-[var(--color-text-primary)] cursor-pointer p-0 leading-none">
-                                <option value="General Shopper">General Shopper</option>
-                                <option value="Student">Student</option>
-                                <option value="Gamer">Gamer</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-            </section>
+  function handleCategoryChange(cat: ProductCategory) {
+    setCategory(cat);
+    setBrand(getDefaultBrands(cat)[0]);
+    setModel('');
+    setRam(getRamOptions(cat)[0]);
+    setStorage(getStorageOptions(cat)[1] || getStorageOptions(cat)[0]);
+    setDiscovery(null);
+    setSelectedVariant(null);
+    setResult(null);
+    setStep('search');
+  }
 
-            {!data && !loading && (
-                <div className="flex-1 flex flex-col items-center justify-center min-h-[500px] border-2 border-[var(--color-border-subtle)] border-dashed rounded-3xl bg-[var(--color-bg-panel)]/50 mt-4">
-                    <ShieldAlert className="w-16 h-16 text-[var(--color-border-strong)] mb-6 opacity-50" />
-                    <h2 className="text-3xl font-extrabold text-[var(--color-text-primary)] tracking-tight">Agentic Pipeline Ready</h2>
-                    <p className="text-[var(--color-text-muted)] mt-3 max-w-md text-center">Analyze a product to trigger the DuckDuckGo Search + Gemini True Cost calculator natively mapping the new Pydantic models.</p>
-                </div>
+  async function handleDiscover(e: React.FormEvent) {
+    e.preventDefault();
+    if (!brand.trim() || !model.trim()) {
+      toast.error('Enter brand and model.');
+      return;
+    }
+    setDiscovering(true);
+    setDiscovery(null);
+    setSelectedVariant(null);
+    setResult(null);
+
+    try {
+      const res = await fetch('/api/discover', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brand: brand.trim(), model: model.trim(), category }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || 'Discovery failed.');
+      setDiscovery(payload as DiscoveryResult);
+      setStep('variants');
+      if (payload.variants?.length) {
+        toast.success(`Found ${payload.variants.length} variant(s) across ${payload.sources?.length || 0} sources.`);
+      } else {
+        toast('No variants auto-detected. You can enter specs manually below.', { icon: '📋' });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Request failed.';
+      toast.error(msg);
+      // Fall through to variants step so user can enter manually
+      setStep('variants');
+    } finally {
+      setDiscovering(false);
+    }
+  }
+
+  function handlePickVariant(v: DiscoveredVariant) {
+    setSelectedVariant(v);
+    setRam(v.ram);
+    setStorage(v.storage);
+    if (v.priceRange.min) {
+      setBudget(Math.round(v.priceRange.min * 1.1));
+    }
+  }
+
+  function handleProceedToAnalyze() {
+    setStep('analyze');
+  }
+
+  async function handleAnalyze(e: React.FormEvent) {
+    e.preventDefault();
+    if (!brand.trim() || !model.trim()) {
+      toast.error('Enter brand and model.');
+      return;
+    }
+    setLoading(true);
+    setResult(null);
+
+    try {
+      const res = await fetch('/api/phone/advice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          brand: brand.trim(),
+          model: model.trim(),
+          ram,
+          storage,
+          budget,
+          manualPrice,
+          category,
+        }),
+      });
+      const payload = (await res.json()) as PhoneAdvice & { error?: string };
+      if (!res.ok) throw new Error(payload.error || 'Analysis failed.');
+      setResult(payload);
+      setPhoneAdvice(payload);
+      addRecentSearch({
+        label: `${brand} ${model} · ${ram} / ${storage}`,
+        brand: brand.trim(),
+        model: model.trim(),
+        ram,
+        storage,
+        category,
+      });
+      toast.success('Analysis complete — see scores below.');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Request failed.';
+      toast.error(msg);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const brief = result?.briefScores;
+  const briefLabels = getBriefLabels(category);
+  const CategoryIcon = categoryIcons[category];
+
+  return (
+    <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full">
+      <header className="mb-8">
+        <p className="ss-eyebrow mb-2">Product finder</p>
+        <h1 className="text-3xl md:text-4xl font-bold text-[var(--color-text-primary)] tracking-tight max-w-2xl">
+          Search. Discover variants. Get spec scores.
+        </h1>
+        <p className="mt-2 text-[var(--color-text-muted)] max-w-xl">
+          Two-step flow: discover available variants first, then pick one for deep AI-powered analysis with live prices.
+        </p>
+      </header>
+
+      {/* ── Category toggle ── */}
+      <div className="flex gap-2 mb-6">
+        {categories.map((cat) => {
+          const Icon = categoryIcons[cat];
+          const active = cat === category;
+          return (
+            <button
+              key={cat}
+              type="button"
+              onClick={() => handleCategoryChange(cat)}
+              className={`
+                inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all
+                ${active
+                  ? 'bg-[var(--color-accent-cyan)] text-[var(--color-bg-primary)] shadow-md shadow-[var(--color-accent-cyan)]/25'
+                  : 'ss-card hover:border-[var(--color-accent-cyan)]/40 text-[var(--color-text-secondary)]'}
+              `}
+            >
+              <Icon className="w-4 h-4" />
+              {categoryLabels[cat]}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── Step indicator ── */}
+      <div className="flex items-center gap-3 mb-6 text-xs font-mono uppercase tracking-widest text-[var(--color-text-muted)]">
+        <span className={step === 'search' ? 'text-[var(--color-accent-cyan)]' : ''}>
+          1 · Search
+        </span>
+        <ChevronRight className="w-3 h-3" />
+        <span className={step === 'variants' ? 'text-[var(--color-accent-cyan)]' : ''}>
+          2 · Pick variant
+        </span>
+        <ChevronRight className="w-3 h-3" />
+        <span className={step === 'analyze' ? 'text-[var(--color-accent-cyan)]' : ''}>
+          3 · Analyze
+        </span>
+      </div>
+
+      {/* ═══ STEP 1: SEARCH ═══ */}
+      <AnimatePresence mode="wait">
+        {step === 'search' && (
+          <motion.section
+            key="search"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="ss-card p-6 md:p-8 mb-8"
+          >
+            <h2 className="text-sm font-mono uppercase tracking-widest text-[var(--color-text-muted)] mb-6 flex items-center gap-2">
+              <CategoryIcon className="w-4 h-4 text-[var(--color-accent-cyan)]" />
+              Search {categoryLabels[category]}
+            </h2>
+            <form onSubmit={handleDiscover} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <label className="grid gap-2 text-xs font-mono uppercase tracking-wider text-[var(--color-text-muted)]">
+                Brand
+                <input
+                  className="ss-input"
+                  value={brand}
+                  onChange={(e) => setBrand(e.target.value)}
+                  placeholder={getDefaultBrands(category)[0]}
+                  list="brand-suggestions"
+                />
+                <datalist id="brand-suggestions">
+                  {getDefaultBrands(category).map((b) => (
+                    <option key={b} value={b} />
+                  ))}
+                </datalist>
+              </label>
+              <label className="grid gap-2 text-xs font-mono uppercase tracking-wider text-[var(--color-text-muted)]">
+                Model
+                <input
+                  className="ss-input"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  placeholder={category === 'laptop' ? 'ROG Strix G16' : category === 'tablet' ? 'Tab S9' : 'Galaxy S24'}
+                />
+              </label>
+              <div className="sm:col-span-2 flex flex-wrap gap-3 items-end">
+                <button
+                  type="submit"
+                  disabled={discovering}
+                  className="ss-btn-primary inline-flex items-center gap-2"
+                >
+                  {discovering ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
+                  {discovering ? 'Discovering variants…' : 'Discover variants'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStep('variants');
+                    setDiscovery(null);
+                  }}
+                  className="text-sm font-mono text-[var(--color-text-muted)] hover:text-[var(--color-accent-cyan)] transition-colors"
+                >
+                  Skip → enter specs manually
+                </button>
+              </div>
+            </form>
+          </motion.section>
+        )}
+
+        {/* ═══ STEP 2: PICK VARIANT ═══ */}
+        {step === 'variants' && (
+          <motion.section
+            key="variants"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="mb-8 space-y-6"
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-mono uppercase tracking-widest text-[var(--color-text-muted)] flex items-center gap-2">
+                <CategoryIcon className="w-4 h-4 text-[var(--color-accent-cyan)]" />
+                {discovery?.variants?.length
+                  ? `${discovery.variants.length} variant(s) found for "${brand} ${model}"`
+                  : `Enter ${categoryLabels[category].toLowerCase()} specs`}
+              </h2>
+              <button
+                type="button"
+                onClick={() => { setStep('search'); setResult(null); }}
+                className="text-xs font-mono text-[var(--color-text-muted)] hover:text-[var(--color-accent-cyan)]"
+              >
+                ← Back to search
+              </button>
+            </div>
+
+            {discovery?.sources?.length ? (
+              <p className="text-xs text-[var(--color-text-muted)]">
+                Sources checked: {discovery.sources.join(', ')} ({discovery.totalSourcesTried} total)
+              </p>
+            ) : null}
+
+            {/* Discovered variant cards */}
+            {discovery?.variants?.length ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {discovery.variants.map((v, i) => {
+                  const isSelected = selectedVariant === v;
+                  return (
+                    <motion.button
+                      key={`${v.ram}-${v.storage}-${v.processor || i}`}
+                      type="button"
+                      onClick={() => handlePickVariant(v)}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: i * 0.05 }}
+                      className={`
+                        ss-card p-4 text-left transition-all cursor-pointer relative
+                        ${isSelected
+                          ? 'border-[var(--color-accent-cyan)] shadow-md shadow-[var(--color-accent-cyan)]/15'
+                          : 'hover:border-[var(--color-accent-cyan)]/40'}
+                      `}
+                    >
+                      {isSelected && (
+                        <CheckCircle2 className="absolute top-3 right-3 w-5 h-5 text-[var(--color-accent-cyan)]" />
+                      )}
+                      <p className="font-bold text-[var(--color-text-primary)]">
+                        {v.ram} / {v.storage}
+                      </p>
+                      {v.processor && (
+                        <p className="text-xs text-[var(--color-accent-cyan)] mt-1">{v.processor}</p>
+                      )}
+                      <div className="mt-2 flex items-baseline gap-2">
+                        {v.priceRange.min ? (
+                          <span className="text-sm font-mono text-[var(--color-accent-cyan)]">
+                            {formatPrice(v.priceRange.min)}
+                          </span>
+                        ) : (
+                          <span className="text-sm text-[var(--color-text-muted)]">Price N/A</span>
+                        )}
+                        {v.priceRange.max && v.priceRange.max !== v.priceRange.min ? (
+                          <span className="text-xs text-[var(--color-text-muted)]">
+                            – {formatPrice(v.priceRange.max)}
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="text-[10px] text-[var(--color-text-muted)] mt-1">
+                        {v.sourceCount} source{v.sourceCount !== 1 ? 's' : ''}
+                      </p>
+                    </motion.button>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            {/* Manual spec entry */}
+            <div className="ss-card p-6">
+              <h3 className="text-xs font-mono uppercase tracking-widest text-[var(--color-text-muted)] mb-4">
+                {discovery?.variants?.length ? 'Or override specs manually' : 'Enter specs'}
+              </h3>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <label className="grid gap-2 text-xs font-mono uppercase tracking-wider text-[var(--color-text-muted)]">
+                  RAM
+                  <select className="ss-select" value={ram} onChange={(e) => setRam(e.target.value)}>
+                    {getRamOptions(category).map((o) => (
+                      <option key={o} value={o}>{o}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-2 text-xs font-mono uppercase tracking-wider text-[var(--color-text-muted)]">
+                  Storage
+                  <select className="ss-select" value={storage} onChange={(e) => setStorage(e.target.value)}>
+                    {getStorageOptions(category).map((o) => (
+                      <option key={o} value={o}>{o}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-2 text-xs font-mono uppercase tracking-wider text-[var(--color-text-muted)]">
+                  Budget (INR)
+                  <input
+                    className="ss-input"
+                    type="number"
+                    min={0}
+                    value={budget}
+                    onChange={(e) => setBudget(Number(e.target.value) || 0)}
+                  />
+                </label>
+                <label className="grid gap-2 text-xs font-mono uppercase tracking-wider text-[var(--color-text-muted)]">
+                  Manual price (opt.)
+                  <input
+                    className="ss-input"
+                    type="number"
+                    min={0}
+                    value={manualPrice || ''}
+                    placeholder="0"
+                    onChange={(e) => setManualPrice(Number(e.target.value) || 0)}
+                  />
+                </label>
+              </div>
+              <div className="mt-4">
+                <button
+                  type="button"
+                  onClick={handleProceedToAnalyze}
+                  className="ss-btn-primary inline-flex items-center gap-2"
+                >
+                  Analyze {brand} {model} · {ram}/{storage}
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </motion.section>
+        )}
+
+        {/* ═══ STEP 3: ANALYZE ═══ */}
+        {step === 'analyze' && (
+          <motion.section
+            key="analyze"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="mb-8 space-y-6"
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-mono uppercase tracking-widest text-[var(--color-text-muted)]">
+                Analyzing: {brand} {model} · {ram}/{storage}
+              </h2>
+              <button
+                type="button"
+                onClick={() => { setStep('variants'); setResult(null); }}
+                className="text-xs font-mono text-[var(--color-text-muted)] hover:text-[var(--color-accent-cyan)]"
+              >
+                ← Change variant
+              </button>
+            </div>
+
+            {/* Auto-trigger analysis */}
+            {!result && !loading && (
+              <form onSubmit={handleAnalyze}>
+                <button type="submit" className="ss-btn-primary inline-flex items-center gap-2">
+                  <Search className="w-5 h-5" />
+                  Run deep analysis
+                </button>
+              </form>
             )}
 
-            {loading && !data && (
-                <div className="flex-1 flex flex-col items-center justify-center min-h-[500px] gap-4">
-                    <Loader2 className="w-12 h-12 text-[var(--color-accent-blue)] animate-spin" />
-                    <p className="text-[var(--color-text-secondary)] font-medium animate-pulse">Piggyback Search on Amazon & Flipkart...</p>
-                </div>
+            {loading && (
+              <div className="flex flex-col items-center justify-center py-20 gap-3 text-[var(--color-text-secondary)]">
+                <Loader2 className="w-10 h-10 text-[var(--color-accent-cyan)] animate-spin" />
+                <p className="font-mono text-sm">
+                  Scraping {category} listings from 15+ sources and running the advisor…
+                </p>
+              </div>
             )}
 
-            {data && (
-                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="grid grid-cols-1 xl:grid-cols-12 gap-8 w-full">
-                    {/* CORE COMPARISON */}
-                    <div className="xl:col-span-8 flex flex-col gap-8">
-                        <div className="flex flex-col gap-2">
-                            <div className="flex items-center justify-between">
-                                <h2 className="text-3xl font-extrabold text-[var(--color-text-primary)] tracking-tight">
-                                    {data.product_title}
-                                </h2>
-                                <span className="bg-[var(--color-accent-blue)]/10 text-[var(--color-accent-blue)] border border-[var(--color-accent-blue)]/30 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-widest">
-                                    Live Piggyback Match
-                                </span>
-                            </div>
-                            <p className="text-[var(--color-text-muted)] font-medium text-sm flex items-center gap-2 mb-2">
-                                <Search className="w-4 h-4" /> Auto-Inferred: {data.inferred_variant}
+            {result && brief && (
+              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+                <section>
+                  <h2 className="ss-eyebrow mb-4">Brief spec scores /10</h2>
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                    {briefLabels.map(({ key, label }) => (
+                      <div key={key} className="ss-card p-4 text-center">
+                        <p className="text-[10px] font-mono uppercase tracking-widest text-[var(--color-text-muted)] mb-2">
+                          {label}
+                        </p>
+                        <p className="ss-score-ring text-3xl font-black text-[var(--color-accent-cyan)]">
+                          {((brief as Record<string, number>)[key] ?? 0).toFixed(1)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-4 text-[var(--color-text-secondary)] text-sm max-w-2xl">{result.insight}</p>
+                  <p className="mt-2 inline-flex items-center gap-2 rounded-full bg-[var(--color-accent-cyan)]/10 px-3 py-1 text-xs font-mono text-[var(--color-accent-cyan)] border border-[var(--color-accent-cyan)]/25">
+                    Verdict: {result.buyVerdict}
+                  </p>
+                </section>
+
+                <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="ss-card p-5">
+                    <p className="text-xs font-mono text-[var(--color-text-muted)] uppercase tracking-widest">Best price</p>
+                    <p className="text-2xl font-bold mt-1">{result.pricing.bestPriceLabel}</p>
+                  </div>
+                  <div className="ss-card p-5">
+                    <p className="text-xs font-mono text-[var(--color-text-muted)] uppercase tracking-widest">Median</p>
+                    <p className="text-2xl font-bold mt-1">{result.pricing.medianPriceLabel}</p>
+                  </div>
+                  <div className="ss-card p-5">
+                    <p className="text-xs font-mono text-[var(--color-text-muted)] uppercase tracking-widest">Offers</p>
+                    <p className="text-2xl font-bold mt-1">{result.pricing.totalOffers}</p>
+                  </div>
+                </section>
+
+                <section className="flex flex-wrap gap-3">
+                  <Link
+                    to="/dashboard/market-analysis"
+                    className="ss-card px-5 py-3 inline-flex items-center gap-2 text-sm font-semibold hover:border-[var(--color-accent-cyan)]/40 transition-colors"
+                  >
+                    <BarChart3 className="w-5 h-5 text-[var(--color-accent-cyan)]" />
+                    Deeper hardware benchmarks
+                  </Link>
+                  <Link
+                    to="/dashboard/trends"
+                    className="ss-card px-5 py-3 inline-flex items-center gap-2 text-sm font-semibold hover:border-[var(--color-accent-cyan)]/40 transition-colors"
+                  >
+                    <TrendingDown className="w-5 h-5 text-[var(--color-accent-cyan)]" />
+                    6-month price trend
+                  </Link>
+                </section>
+
+                {result.offers?.length ? (
+                  <section>
+                    <h3 className="ss-eyebrow mb-3">Live offers (snapshot)</h3>
+                    <div className="space-y-2">
+                      {result.offers.slice(0, 8).map((o) => (
+                        <a
+                          key={`${o.store}-${o.title}-${o.priceLabel}`}
+                          href={o.url || undefined}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="ss-card flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2 p-4 hover:border-[var(--color-accent-cyan)]/40 transition-colors"
+                        >
+                          <div>
+                            <p className="font-semibold text-[var(--color-text-primary)]">
+                              {o.store} · {o.sourceType}
                             </p>
-                            {data.trust_warnings && data.trust_warnings.length > 0 ? (
-                                <span className="bg-red-500/10 text-red-500 border border-red-500/30 px-3 py-1 rounded-md text-xs font-bold inline-flex items-center w-max gap-1">
-                                    <ShieldAlert className="w-3 h-3" /> Seller Discrepancies Detected
-                                </span>
-                            ) : (
-                                <span className="bg-green-500/10 text-green-500 border border-green-500/30 px-3 py-1 rounded-md text-xs font-bold inline-flex items-center w-max gap-1">
-                                    <CheckCircle2 className="w-3 h-3" /> 100% Officially Verified Specs
-                                </span>
+                            <p className="text-sm text-[var(--color-text-muted)]">{o.title}</p>
+                            {o.variantMatchMode && (
+                              <p className="text-[10px] text-[var(--color-text-muted)] mt-1">
+                                Match: {o.variantMatchMode}
+                                {o.variantConfirmed ? ' ✓ confirmed' : ''}
+                              </p>
                             )}
-                        </div>
-
-                        {/* Split Screen Horizon Cards */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            {/* Amazon Card */}
-                            <div className={`rounded-2xl border-2 flex flex-col relative overflow-hidden transition-all hover:shadow-lg bg-[#FF9900]/5 border-[#FF9900]/40 ${data.winner === 'Amazon' ? 'ring-4 ring-[#FF9900]' : ''}`}>
-                                <div className="p-4 border-b-2 border-[#FF9900]/20 flex justify-between items-center">
-                                    <span className="font-extrabold text-xl tracking-tight">Amazon</span>
-                                    {data.winner === 'Amazon' && <span className="bg-yellow-500/20 text-yellow-600 text-[10px] uppercase font-bold px-2 py-1 rounded flex items-center gap-1"><Award className="w-3 h-3" /> Winner</span>}
-                                </div>
-                                <div className="p-6 flex-1 flex flex-col justify-center">
-                                    <p className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-widest mb-1 flex items-center gap-2">
-                                        Sticker Price: <span className="line-through decoration-red-500/50 decoration-2">₹{data.amazon_data.sticker_price?.toLocaleString()}</span>
-                                    </p>
-                                    <div className="flex items-baseline gap-2 mb-2">
-                                        <span className="text-5xl font-black text-[var(--color-text-primary)] tracking-tighter">₹{data.amazon_data.landed_cost?.toLocaleString()}</span>
-                                    </div>
-                                    <p className="text-sm font-bold text-[var(--color-accent-blue)]">Final Landed Cost</p>
-                                </div>
-                            </div>
-
-                            {/* Flipkart Card */}
-                            <div className={`rounded-2xl border-2 flex flex-col relative overflow-hidden transition-all hover:shadow-lg bg-[#2874F0]/5 border-[#2874F0]/40 ${data.winner === 'Flipkart' ? 'ring-4 ring-[#2874F0]' : ''}`}>
-                                <div className="p-4 border-b-2 border-[#2874F0]/20 flex justify-between items-center">
-                                    <span className="font-extrabold text-xl tracking-tight">Flipkart</span>
-                                    {data.winner === 'Flipkart' && <span className="bg-blue-500/20 text-blue-600 text-[10px] uppercase font-bold px-2 py-1 rounded flex items-center gap-1"><Award className="w-3 h-3" /> Winner</span>}
-                                </div>
-                                <div className="p-6 flex-1 flex flex-col justify-center">
-                                    <p className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-widest mb-1 flex items-center gap-2">
-                                        Sticker Price: <span className="line-through decoration-red-500/50 decoration-2">₹{data.flipkart_data.sticker_price?.toLocaleString()}</span>
-                                    </p>
-                                    <div className="flex items-baseline gap-2 mb-2">
-                                        <span className="text-5xl font-black text-[var(--color-text-primary)] tracking-tighter">₹{data.flipkart_data.landed_cost?.toLocaleString()}</span>
-                                    </div>
-                                    <p className="text-sm font-bold text-[var(--color-accent-blue)]">Final Landed Cost</p>
-                                </div>
-                            </div>
-                        </div>
-
+                          </div>
+                          <span className="font-mono text-[var(--color-accent-cyan)] whitespace-nowrap">{o.priceLabel}</span>
+                        </a>
+                      ))}
                     </div>
+                  </section>
+                ) : null}
 
-                    {/* 3. AGENTIC SIDEBAR */}
-                    <div className="xl:col-span-4 flex flex-col gap-6">
-                        {/* Winner/Verdict Badge */}
-                        <div className="bg-gradient-to-br from-[var(--color-accent-blue)] to-[var(--color-accent-purple)] rounded-2xl p-6 text-white shadow-xl relative overflow-hidden">
-                            <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/70 mb-2">Agent Verdict - {data.winner} Wins</h3>
-                            <p className="text-lg font-bold leading-tight relative z-10">{data.persona_verdict}</p>
-                            <div className="absolute -bottom-10 -right-10 w-32 h-32 bg-white/10 rounded-full blur-2xl"></div>
+                {result.alternatives?.length ? (
+                  <section>
+                    <h3 className="ss-eyebrow mb-3">Alternatives</h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {result.alternatives.map((alt) => (
+                        <div key={alt.model} className="ss-card p-4">
+                          <p className="font-semibold text-sm">{alt.model}</p>
+                          <p className="text-xs text-[var(--color-text-muted)] mt-1">{alt.why}</p>
+                          <p className="text-sm font-mono text-[var(--color-accent-cyan)] mt-1">{alt.estimatedPriceLabel}</p>
                         </div>
-
-                        {/* Persona Score */}
-                        <div className="bg-[var(--color-bg-panel)] rounded-2xl p-6 border-2 border-[var(--color-accent-purple)] shadow-[0_0_30px_rgba(168,85,247,0.1)] text-center relative overflow-hidden">
-                            <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-accent-purple)] mb-6">Persona Match Score</h3>
-                            <div className="relative inline-flex items-center justify-center mb-2">
-                                <svg className="w-36 h-36 transform -rotate-90">
-                                    <circle cx="72" cy="72" r="64" stroke="currentColor" strokeWidth="6" fill="transparent" className="text-[var(--color-border-subtle)]" />
-                                    <circle cx="72" cy="72" r="64" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-[var(--color-accent-purple)] transition-all" strokeDasharray="402" strokeDashoffset={402 - (402 * ((data.persona_score || 0) / 10))} strokeLinecap="round" />
-                                </svg>
-                                <span className="absolute text-5xl font-black text-[var(--color-text-primary)]">{data.persona_score}</span>
-                            </div>
-                        </div>
-
-                        {/* Smart Deal Stacker Container */}
-                        <div className="bg-[var(--color-bg-panel)] rounded-2xl p-6 border border-[var(--color-border-subtle)] shadow-sm">
-                            <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-text-muted)] mb-4 flex items-center gap-2">
-                                <Zap className="w-4 h-4 text-[var(--color-accent-cyan)]" /> Applied Discounts ({data.winner})
-                            </h3>
-                            <div className="space-y-3 font-mono text-sm font-medium">
-                                <div className="flex justify-between items-center text-[var(--color-text-secondary)]">
-                                    <span>Sticker Price</span>
-                                    <span>₹{(data.winner === 'Flipkart' ? data.flipkart_data.sticker_price : data.amazon_data.sticker_price)?.toLocaleString()}</span>
-                                </div>
-                                <div className="flex justify-between items-center text-green-400 border-b border-[var(--color-border-subtle)] pb-4">
-                                    <span>Discount Config</span>
-                                    <span className="text-right text-xs max-w-[150px] leading-tight">{(data.winner === 'Flipkart' ? data.flipkart_data.discount_applied : data.amazon_data.discount_applied) || 'None'}</span>
-                                </div>
-                                <div className="flex justify-between items-center text-xl font-black text-[var(--color-text-primary)] pt-1">
-                                    <span>Landed Cost</span>
-                                    <span>₹{(data.winner === 'Flipkart' ? data.flipkart_data.landed_cost : data.amazon_data.landed_cost)?.toLocaleString()}</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Fine Print Warnings */}
-                        <div className="flex flex-col gap-4">
-                            {data.amazon_data.fine_print_warning && (
-                                <div className="bg-red-500/10 border-l-4 border-red-500 rounded-r-xl p-4 flex gap-3 text-red-400 shadow-sm">
-                                    <ShieldAlert className="w-5 h-5 shrink-0 mt-0.5" />
-                                    <div className="flex-1">
-                                        <h4 className="text-[10px] font-bold uppercase tracking-[0.15em] mb-1">Fine Print (Amazon)</h4>
-                                        <p className="text-sm font-semibold">{data.amazon_data.fine_print_warning}</p>
-                                    </div>
-                                </div>
-                            )}
-                            {data.flipkart_data.fine_print_warning && (
-                                <div className="bg-red-500/10 border-l-4 border-red-500 rounded-r-xl p-4 flex gap-3 text-red-400 shadow-sm">
-                                    <ShieldAlert className="w-5 h-5 shrink-0 mt-0.5" />
-                                    <div className="flex-1">
-                                        <h4 className="text-[10px] font-bold uppercase tracking-[0.15em] mb-1">Fine Print (Flipkart)</h4>
-                                        <p className="text-sm font-semibold">{data.flipkart_data.fine_print_warning}</p>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-
+                      ))}
                     </div>
-                </motion.div>
+                  </section>
+                ) : null}
+
+                {result.cautions?.length ? (
+                  <section className="ss-card p-5 border-yellow-500/20">
+                    <h3 className="text-xs font-mono uppercase tracking-widest text-yellow-500 mb-2">Cautions</h3>
+                    <ul className="text-sm text-[var(--color-text-secondary)] space-y-1">
+                      {result.cautions.map((c) => (
+                        <li key={c}>• {c}</li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null}
+              </motion.div>
             )}
-        </div>
-    );
+          </motion.section>
+        )}
+      </AnimatePresence>
+    </div>
+  );
 }

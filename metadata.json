@@ -1,5 +1,6 @@
 {
-  "name": "",
-  "description": "",
+  "name": "ShopSense AI",
+  "description": "Phone-first shopping advisor: variant-aware offers, AI benchmarks, and alternatives (Gemini showcase).",
   "requestFramePermissions": []
 }
+

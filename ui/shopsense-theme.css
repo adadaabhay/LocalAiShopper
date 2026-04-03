@@ -1,0 +1,80 @@
+/* Unified ShopSense “phone finder” look: dark slate + amber accent site-wide */
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;700&display=swap');
+
+:root,
+.dark-theme {
+  --font-sans: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --color-bg-base: #0b1220;
+  --color-bg-panel: rgba(17, 24, 39, 0.92);
+  --color-bg-panel-hover: rgba(31, 41, 55, 0.95);
+  --color-bg-elevated: #111827;
+
+  --color-text-primary: #f9fafb;
+  --color-text-secondary: #cbd5e1;
+  --color-text-muted: #94a3b8;
+
+  --color-accent-cyan: #f59e0b;
+  --color-accent-purple: #f97316;
+  --color-accent-blue: #fb923c;
+  --color-accent-green: #34d399;
+  --color-accent-red: #f87171;
+
+  --color-border-subtle: rgba(148, 163, 184, 0.18);
+  --color-border-strong: rgba(148, 163, 184, 0.28);
+
+  --ss-glow: rgba(245, 158, 11, 0.18);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  color: var(--color-text-primary);
+  background:
+    radial-gradient(circle at 10% 0%, var(--ss-glow), transparent 42%),
+    linear-gradient(165deg, #020617 0%, #0f172a 50%, #111827 100%);
+  -webkit-font-smoothing: antialiased;
+}
+
+.ss-card {
+  backdrop-filter: blur(18px);
+  background: rgba(17, 24, 39, 0.78);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 1.25rem;
+  box-shadow: 0 24px 80px rgba(2, 6, 23, 0.35);
+}
+
+.ss-eyebrow {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.72rem;
+  color: #fdba74;
+}
+
+.ss-btn-primary {
+  border: none;
+  cursor: pointer;
+  border-radius: 1.125rem;
+  padding: 0.75rem 1.5rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, #f59e0b, #f97316);
+  color: #111827;
+}
+
+.ss-input,
+.ss-select {
+  border-radius: 1.125rem;
+  border: 1px solid var(--color-border-subtle);
+  background: rgba(15, 23, 42, 0.85);
+  color: var(--color-text-primary);
+  padding: 0.65rem 1rem;
+  font: inherit;
+  width: 100%;
+}
+
+.ss-score-ring {
+  font-variant-numeric: tabular-nums;
+}
