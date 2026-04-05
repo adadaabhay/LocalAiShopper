@@ -10,15 +10,6 @@ import * as cheerio from 'cheerio';
 import { getSourcesForCategory } from './sourceRegistry.js';
 
 let chromium = null;
-(async () => {
-  try {
-    const playwrightName = 'playwright';
-    const playwright = await import(playwrightName);
-    chromium = playwright.chromium;
-  } catch (e) {
-    console.warn('Playwright not installed, official stores will fallback to basic fetch.');
-  }
-})();
 
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
@@ -165,21 +156,8 @@ async function fetchWithTimeout(url, timeoutMs = 5000) {
 }
 
 async function fetchWithPlaywright(url, timeoutMs = 12000) {
-  if (!chromium) return '';
-  let browser;
-  try {
-    browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-    await page.waitForTimeout(1500); // Give React/Next.js time to hydrate
-    const html = await page.content();
-    return html;
-  } catch (e) {
-    console.warn(`Playwright failed for ${url}:`, e.message);
-    return '';
-  } finally {
-    if (browser) await browser.close().catch(() => {});
-  }
+  // Playwright removed for simplicity. Fallback to basic fetch.
+  return fetchWithTimeout(url, timeoutMs);
 }
 
 // ── Main discovery function ────────────────────────────────────────────

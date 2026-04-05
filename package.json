@@ -6,7 +6,6 @@
     "dev": "vite",
     "build": "vite build",
     "vercel-build": "vite build",
-    "render-build": "npm install playwright && npx playwright install chromium && vite build",
     "start": "node server.js",
     "start:gemini": "node backend/gemini/server.js",
     "start:showcase": "node backend/gemini/server.js",
