@@ -12,7 +12,8 @@ import { getSourcesForCategory } from './sourceRegistry.js';
 let chromium = null;
 (async () => {
   try {
-    const playwright = await import('playwright');
+    const playwrightName = 'playwright';
+    const playwright = await import(playwrightName);
     chromium = playwright.chromium;
   } catch (e) {
     console.warn('Playwright not installed, official stores will fallback to basic fetch.');
