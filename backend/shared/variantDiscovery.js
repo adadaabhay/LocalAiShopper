@@ -9,6 +9,16 @@
 import * as cheerio from 'cheerio';
 import { getSourcesForCategory } from './sourceRegistry.js';
 
+let chromium = null;
+(async () => {
+  try {
+    const playwright = await import('playwright');
+    chromium = playwright.chromium;
+  } catch (e) {
+    console.warn('Playwright not installed, official stores will fallback to basic fetch.');
+  }
+})();
+
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 
@@ -153,6 +163,24 @@ async function fetchWithTimeout(url, timeoutMs = 5000) {
   }
 }
 
+async function fetchWithPlaywright(url, timeoutMs = 12000) {
+  if (!chromium) return '';
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    await page.waitForTimeout(1500); // Give React/Next.js time to hydrate
+    const html = await page.content();
+    return html;
+  } catch (e) {
+    console.warn(`Playwright failed for ${url}:`, e.message);
+    return '';
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
 // ── Main discovery function ────────────────────────────────────────────
 
 function buildCacheKey(brand, model, category) {
@@ -222,7 +250,12 @@ export async function discoverVariants({ brand, model, category = 'phone' }) {
   // Scrape all sources in parallel with aggressive individual timeouts
   const tasks = sources.map(async (source) => {
     const url = source.buildSearchUrl(query);
-    const html = await fetchWithTimeout(url, 5000);
+    
+    // Use Playwright for dynamic official stores to bypass bot protection/React rendering
+    const html = (source.kind === 'official' && chromium)
+      ? await fetchWithPlaywright(url, 10000)
+      : await fetchWithTimeout(url, 5000);
+      
     if (!html || html.length < 200) return [];
     return discoverFromHtml({
       html,

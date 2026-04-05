@@ -261,7 +261,7 @@ function summarizeOffersForPrompt(offers) {
 
 function buildPhonePrompt({ input, variantMatchedOffersForPrompt, alternativesForPrompt, heuristic }) {
   return `
-You are ShopSense Phone Advisor.
+You are ShopSense Android/Tablet Advisor.
 Use the scraped offers and user preferences to generate concise buyer guidance.
 
 User input:
@@ -288,17 +288,20 @@ Return strict JSON only:
     "battery": 0
   },
   "hardwareBenchmarks": [
-    { "area": "string", "score": 0, "detail": "string" }
+    { "area": "CPU/Performance", "score": 0, "detail": "string (succinct gist of power)" },
+    { "area": "RAM & Storage Speed", "score": 0, "detail": "string (succinct gist)" },
+    { "area": "Display & Screen", "score": 0, "detail": "string (succinct gist)" },
+    { "area": "Camera Sensors", "score": 0, "detail": "string (succinct gist)" },
+    { "area": "Battery Reliability", "score": 0, "detail": "string (succinct gist)" },
+    { "area": "Hardware Durability", "score": 0, "detail": "string (succinct gist)" }
   ],
   "benchmarks": [
-    { "metric": "Overall", "score": 0, "note": "string" },
-    { "metric": "Performance", "score": 0, "note": "string" },
-    { "metric": "Value", "score": 0, "note": "string" },
-    { "metric": "Camera", "score": 0, "note": "string" },
-    { "metric": "Battery", "score": 0, "note": "string" },
-    { "metric": "Display", "score": 0, "note": "string" },
-    { "metric": "Thermals", "score": 0, "note": "string" },
-    { "metric": "Software", "score": 0, "note": "string" }
+    { "metric": "Overall Value", "score": 0, "note": "string" },
+    { "metric": "Raw Performance", "score": 0, "note": "string" },
+    { "metric": "Camera Optics", "score": 0, "note": "string" },
+    { "metric": "Battery Lasting", "score": 0, "note": "string" },
+    { "metric": "Panel Quality", "score": 0, "note": "string" },
+    { "metric": "Thermals", "score": 0, "note": "string" }
   ],
   "alternatives": [
     {
@@ -311,18 +314,18 @@ Return strict JSON only:
 }
 
 Rules:
-- briefScores and hardwareBenchmarks scores are 0-10 (one decimal max). hardwareBenchmarks: 6-9 rows, professional hardware-buyer detail.
-- benchmarks.metric scores may be 0-100 for legacy UI parity.
-- Keep alternatives to max 4.
-- Keep cautions to max 4.
-- Use plain language for a real customer.
+- ALL scores across the entire JSON object (including benchmarks and hardwareBenchmarks) MUST STRICTLY be on a scale of 0 to 10 (e.g. 8.5).
+- Your 'hardwareBenchmarks' array must contain exactly the 6 requested areas above!
+- Provide a clear, insightful 'detail' gist for every area explaining exactly why it received that score.
+- Keep alternatives and cautions to max 4.
+- IMPORTANT: Use official technical specs to inform your scores, no hallucination.
 `.trim();
 }
 
 function buildLaptopPrompt({ input, variantMatchedOffersForPrompt, alternativesForPrompt, heuristic }) {
   return `
 You are ShopSense Laptop Advisor.
-Use the scraped offers and user preferences to generate concise buyer guidance for a laptop purchase.
+Use the scraped offers and user preferences to generate concise buyer guidance.
 
 User input:
 ${JSON.stringify(input, null, 2)}
@@ -348,17 +351,20 @@ Return strict JSON only:
     "buildQuality": 0
   },
   "hardwareBenchmarks": [
-    { "area": "string", "score": 0, "detail": "string" }
+    { "area": "CPU/Multi-core", "score": 0, "detail": "string (succinct gist)" },
+    { "area": "Heating/Thermals", "score": 0, "detail": "string (succinct gist)" },
+    { "area": "RAM & Storage Tier", "score": 0, "detail": "string (succinct gist)" },
+    { "area": "Display nits/sRGB", "score": 0, "detail": "string (succinct gist)" },
+    { "area": "Battery Life", "score": 0, "detail": "string (succinct gist)" },
+    { "area": "Hardware Durability", "score": 0, "detail": "string (succinct gist)" }
   ],
   "benchmarks": [
-    { "metric": "Overall", "score": 0, "note": "string" },
-    { "metric": "CPU Performance", "score": 0, "note": "string" },
-    { "metric": "Value", "score": 0, "note": "string" },
-    { "metric": "Display", "score": 0, "note": "string" },
-    { "metric": "Battery", "score": 0, "note": "string" },
-    { "metric": "Thermals", "score": 0, "note": "string" },
-    { "metric": "Build Quality", "score": 0, "note": "string" },
-    { "metric": "Keyboard", "score": 0, "note": "string" }
+    { "metric": "Overall Value", "score": 0, "note": "string" },
+    { "metric": "Processing", "score": 0, "note": "string" },
+    { "metric": "Screen Quality", "score": 0, "note": "string" },
+    { "metric": "Battery Lasting", "score": 0, "note": "string" },
+    { "metric": "Cooling/Fans", "score": 0, "note": "string" },
+    { "metric": "Build Solidness", "score": 0, "note": "string" }
   ],
   "alternatives": [
     {
@@ -371,12 +377,11 @@ Return strict JSON only:
 }
 
 Rules:
-- briefScores and hardwareBenchmarks scores are 0-10 (one decimal max). hardwareBenchmarks: 6-9 rows, professional laptop detail.
-- benchmarks.metric scores may be 0-100 for legacy UI parity.
-- Keep alternatives to max 4.
-- Keep cautions to max 4.
-- For laptops, consider: CPU thermals, screen quality, keyboard feel, port selection, upgrade path.
-- Use plain language for a real customer.
+- ALL scores across the entire JSON object (including benchmarks and hardwareBenchmarks) MUST STRICTLY be on a scale of 0 to 10 (e.g. 8.5).
+- Your 'hardwareBenchmarks' array must contain exactly the 6 requested areas above!
+- Provide a clear, insightful 'detail' gist for every area explaining exactly why it received that score.
+- Keep alternatives and cautions to max 4.
+- IMPORTANT: Use official technical specs to inform your scores, no hallucination.
 `.trim();
 }
 
@@ -563,7 +568,12 @@ export async function advisePhonePurchase(input) {
     category,
   });
 
-  const provider = await getAiProvider();
+  let provider;
+  try {
+    provider = await getAiProvider();
+  } catch (error) {
+    console.warn('AI Provider initialization failed, using heuristic fallback:', error?.message);
+  }
   // Alternatives should come from all candidates so we can suggest other variants, not only exact matches.
   const alternatives = computeAlternativesDeterministic({
     input,
@@ -579,13 +589,14 @@ export async function advisePhonePurchase(input) {
   });
 
   let aiAdvice;
-  try {
-    const raw = await provider.generate(prompt);
+  if (provider) {
     try {
-      aiAdvice = extractFirstJsonObject(raw);
-    } catch (parseError) {
-      // One repair attempt: force strict JSON only (reduces fragile failures).
-      const repairPrompt = `
+      const raw = await provider.generate(prompt);
+      try {
+        aiAdvice = extractFirstJsonObject(raw);
+      } catch (parseError) {
+        // One repair attempt: force strict JSON only (reduces fragile failures).
+        const repairPrompt = `
 The previous response was not valid JSON.
 Return strict JSON only that matches the schema from the original prompt.
 
@@ -593,10 +604,15 @@ Previous response (may contain JSON/text):
 ${raw}
 `.trim();
 
-      const repairedRaw = await provider.generate(repairPrompt);
-      aiAdvice = extractFirstJsonObject(repairedRaw);
+        const repairedRaw = await provider.generate(repairPrompt);
+        aiAdvice = extractFirstJsonObject(repairedRaw);
+      }
+    } catch (e) {
+      console.warn('AI Generation failed:', e?.message);
     }
-  } catch {
+  }
+
+  if (!aiAdvice) {
     aiAdvice = createFallbackAdvice({
       heuristic,
       alternatives,
@@ -617,7 +633,7 @@ ${raw}
   });
 
   return {
-    provider: provider.name,
+    provider: provider ? provider.name : 'heuristic-fallback',
     category,
     query,
     selectedVariant: {

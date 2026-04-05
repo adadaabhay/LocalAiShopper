@@ -21,7 +21,10 @@ function createScheduler(entries, maxConcurrentAgents, maxPerKey) {
   function chooseEntry() {
     return entries
       .filter((entry) => entry.active < maxPerKey)
-      .sort((left, right) => left.active - right.active)[0];
+      .sort((a, b) => {
+        if (a.active !== b.active) return a.active - b.active;
+        return Math.random() - 0.5; // Randomize ties to distribute load evenly
+      })[0];
   }
 
   function drainQueue() {

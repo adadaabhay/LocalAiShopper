@@ -1,18 +1,17 @@
-## ShopSense Phone Advisor
+## ShopSense AI: E-Commerce Phone Advisor
 
 **Repository:** [github.com/adadaabhay/ShopSenseAi](https://github.com/adadaabhay/ShopSenseAi)
-
 **Live demo (Vercel):** [shop-sense-ai-real.vercel.app](https://shop-sense-ai-real.vercel.app)
 
-Phone-first comparison app for GitHub Showcase:
+ShopSense AI is a high-performance, agentic price comparison engine that provides accurate, real-time e-commerce analysis specifically tailored for smartphones. 
 
-- **Gemini mode:** Gemini API (variant-aware offers + AI benchmarks)
+> **Note on AI Selection**: This project **explicitly uses the Gemini API** for all intelligent processing. It does not contain any local LLM model weights (e.g., Llama, Qwen) to keep the repository secure, lightweight, and deployment-ready.
 
-It provides:
+### It provides:
 
-- Variant selection (brand, model, RAM, storage, budget)
-- Offer scraping pipeline (Amazon, Flipkart, Samsung, Motorola, iQOO)
-- AI advice + benchmark summary + alternatives in your budget range
+- **Smart Variant Selection**: Filter by brand, model, RAM, storage, and precise budget constraints.
+- **Real-Time Data Pipeline**: Scrapes live pricing and offers from Amazon, Flipkart, Samsung, Motorola, and iQOO.
+- **Intelligent Insights**: Detailed AI hardware benchmarks, advice, and top alternatives within the user's budget range.
 
 ## Quick Start
 

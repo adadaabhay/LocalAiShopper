@@ -16,3 +16,9 @@ __pycache__/
 
 # IDEs
 .vscode/
+
+# Local LLMs and Weights
+*.gguf
+*.bin
+models/
+ollama-models/

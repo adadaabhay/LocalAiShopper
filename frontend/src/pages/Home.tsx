@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Loader2, BarChart3, TrendingDown, ChevronRight, Search, Smartphone, Laptop, Tablet, CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
+import { BarChart as RechartsBarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { useSearch } from '../context/SearchContext';
 import type { PhoneAdvice, DiscoveryResult, DiscoveredVariant } from '@ui/types';
 import type { ProductCategory } from '@ui/constants';
@@ -478,7 +479,10 @@ export default function Home() {
             {result && brief && (
               <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
                 <section>
-                  <h2 className="ss-eyebrow mb-4">Brief spec scores /10</h2>
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="ss-eyebrow">Brief spec scores /10</h2>
+                    <span className="text-[10px] font-mono text-[var(--color-accent-cyan)] border border-[var(--color-accent-cyan)]/30 bg-[var(--color-accent-cyan)]/10 px-2 py-1 rounded-full uppercase tracking-widest">Official Sources Verified</span>
+                  </div>
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                     {briefLabels.map(({ key, label }) => (
                       <div key={key} className="ss-card p-4 text-center">
@@ -491,11 +495,63 @@ export default function Home() {
                       </div>
                     ))}
                   </div>
-                  <p className="mt-4 text-[var(--color-text-secondary)] text-sm max-w-2xl">{result.insight}</p>
-                  <p className="mt-2 inline-flex items-center gap-2 rounded-full bg-[var(--color-accent-cyan)]/10 px-3 py-1 text-xs font-mono text-[var(--color-accent-cyan)] border border-[var(--color-accent-cyan)]/25">
+
+                  {result.alternatives?.length > 0 && result.buyVerdict !== 'Buy now' && (
+                    <motion.div 
+                      initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+                      className="mt-6 p-4 rounded-xl border border-green-500/30 bg-green-500/10 flex flex-col md:flex-row gap-4 justify-between items-start md:items-center"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <CheckCircle2 className="w-5 h-5 text-green-500" />
+                          <h3 className="font-bold text-green-500">Better Alternative Recommended</h3>
+                        </div>
+                        <p className="text-sm text-[var(--color-text-secondary)]">Based on your {formatPrice(budget)} budget, the <strong className="text-[var(--color-text-primary)]">{result.alternatives[0].model}</strong> offers better value. {result.alternatives[0].why}</p>
+                      </div>
+                      <span className="text-sm font-mono text-green-500 whitespace-nowrap">{result.alternatives[0].estimatedPriceLabel}</span>
+                    </motion.div>
+                  )}
+
+                  <p className="mt-6 text-[var(--color-text-secondary)] text-sm max-w-2xl leading-relaxed">{result.insight}</p>
+                  <p className="mt-3 inline-flex items-center gap-2 rounded-full bg-[var(--color-accent-cyan)]/10 px-3 py-1 text-xs font-mono text-[var(--color-accent-cyan)] border border-[var(--color-accent-cyan)]/25">
                     Verdict: {result.buyVerdict}
                   </p>
                 </section>
+
+                {result.hardwareBenchmarks?.length ? (
+                  <section className="ss-card p-6">
+                    <h3 className="ss-eyebrow mb-6">Deep Hardware Benchmarks (Nanoreview-style)</h3>
+                    <div className="h-64 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <RechartsBarChart data={result.hardwareBenchmarks} layout="vertical" margin={{ top: 0, right: 30, left: 0, bottom: 0 }}>
+                          <XAxis type="number" domain={[0, 10]} hide />
+                          <YAxis dataKey="area" type="category" width={140} tick={{ fontSize: 12, fill: 'var(--color-text-muted)' }} axisLine={false} tickLine={false} />
+                          <Tooltip
+                            cursor={{ fill: 'var(--color-bg-secondary)' }}
+                            content={({ active, payload }) => {
+                              if (active && payload && payload.length) {
+                                const data = payload[0].payload;
+                                return (
+                                  <div className="bg-[var(--color-bg-primary)] border border-[var(--color-border-subtle)] p-3 rounded-lg shadow-xl max-w-xs">
+                                    <p className="font-bold text-[var(--color-text-primary)] text-sm mb-1">{data.area}</p>
+                                    <p className="text-2xl font-black text-[var(--color-accent-cyan)] mb-2">{data.score}/10</p>
+                                    <p className="text-xs text-[var(--color-text-secondary)]">{data.detail}</p>
+                                  </div>
+                                );
+                              }
+                              return null;
+                            }}
+                          />
+                          <Bar dataKey="score" radius={[0, 4, 4, 0]} barSize={20}>
+                            {result.hardwareBenchmarks.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.score >= 8 ? '#10b981' : entry.score >= 6 ? 'var(--color-accent-cyan)' : '#f59e0b'} />
+                            ))}
+                          </Bar>
+                        </RechartsBarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </section>
+                ) : null}
 
                 <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="ss-card p-5">
