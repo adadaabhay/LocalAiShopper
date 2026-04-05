@@ -48,13 +48,20 @@ function formatPrice(val: number | null) {
 type WizardStep = 'search' | 'variants' | 'analyze';
 
 export default function Home() {
-  const { setPhoneAdvice, addRecentSearch } = useSearch();
+  const { phoneAdvice, setPhoneAdvice, addRecentSearch, recentSearches } = useSearch();
+  const lastSearch = recentSearches?.[0] || null;
 
   // ── Wizard state ──────────────────────────────────────────────────
-  const [step, setStep] = useState<WizardStep>('search');
-  const [category, setCategory] = useState<ProductCategory>('phone');
-  const [brand, setBrand] = useState(getDefaultBrands('phone')[0]);
-  const [model, setModel] = useState('Galaxy S24');
+  const [step, setStep] = useState<WizardStep>(phoneAdvice ? 'analyze' : 'search');
+  const [category, setCategory] = useState<ProductCategory>(
+    phoneAdvice && lastSearch?.category ? lastSearch.category : 'phone'
+  );
+  const [brand, setBrand] = useState(
+    phoneAdvice && lastSearch ? lastSearch.brand : getDefaultBrands('phone')[0]
+  );
+  const [model, setModel] = useState(
+    phoneAdvice && lastSearch ? lastSearch.model : 'Galaxy S24'
+  );
 
   // ── Discovery (Phase 1) ───────────────────────────────────────────
   const [discovering, setDiscovering] = useState(false);
@@ -62,12 +69,12 @@ export default function Home() {
   const [selectedVariant, setSelectedVariant] = useState<DiscoveredVariant | null>(null);
 
   // ── Analysis (Phase 2) ────────────────────────────────────────────
-  const [ram, setRam] = useState('8GB');
-  const [storage, setStorage] = useState('256GB');
+  const [ram, setRam] = useState(phoneAdvice && lastSearch ? lastSearch.ram : '8GB');
+  const [storage, setStorage] = useState(phoneAdvice && lastSearch ? lastSearch.storage : '256GB');
   const [budget, setBudget] = useState(50000);
   const [manualPrice, setManualPrice] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<PhoneAdvice | null>(null);
+  const [result, setResult] = useState<PhoneAdvice | null>(phoneAdvice);
 
   // ── Handlers ──────────────────────────────────────────────────────
 
@@ -174,6 +181,13 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleNewSearch() {
+    setPhoneAdvice(null);
+    setResult(null);
+    setDiscovery(null);
+    setStep('search');
   }
 
   const brief = result?.briefScores;
@@ -448,13 +462,24 @@ export default function Home() {
               <h2 className="text-sm font-mono uppercase tracking-widest text-[var(--color-text-muted)]">
                 Analyzing: {brand} {model} · {ram}/{storage}
               </h2>
-              <button
-                type="button"
-                onClick={() => { setStep('variants'); setResult(null); }}
-                className="text-xs font-mono text-[var(--color-text-muted)] hover:text-[var(--color-accent-cyan)]"
-              >
-                ← Change variant
-              </button>
+              <div className="flex gap-4">
+                {result && (
+                  <button
+                    type="button"
+                    onClick={handleNewSearch}
+                    className="text-xs font-mono text-[var(--color-accent-cyan)] hover:brightness-125 transition-colors border border-[var(--color-accent-cyan)]/30 bg-[var(--color-accent-cyan)]/10 px-3 py-1.5 rounded-lg"
+                  >
+                    + New Search
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => { setStep('variants'); setResult(null); setPhoneAdvice(null); }}
+                  className="text-xs font-mono text-[var(--color-text-muted)] hover:text-[var(--color-accent-cyan)] py-1.5"
+                >
+                  ← Change variant
+                </button>
+              </div>
             </div>
 
             {/* Auto-trigger analysis */}
