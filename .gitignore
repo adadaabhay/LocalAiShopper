@@ -1,24 +1,56 @@
+# Dependencies
 node_modules/
-build/
-dist/
+.pnp
+.pnp.js
+
+# Testing
 coverage/
-.DS_Store
+
+# Production
+dist/
+build/
+
+# Environment Variables (CRITICAL: Never upload your keys/secrets)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 *.log
-data/
-.env*
-!.env.example
-!.env.gemini.example
+vite.log
+backend-*.log
 
-# Python
-venv/
-__pycache__/
-*.pyc
+# Local debugging and scratch artifacts
+test-*.js
+test-*.html
+test-*.txt
+test-*.json
+fetch-variants.js
+local-coder.js
 
-# IDEs
+# Editor/System Files
+.DS_Store
 .vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+thumb.db
 
-# Local LLMs and Weights
-*.gguf
-*.bin
-models/
-ollama-models/
+# Playwright/Browser
+test-results/
+playwright-report/
+blob-report/
+playwright/.local-browsers
+
+# Scraping data cache (if any)
+*.json
+!package.json
+!tsconfig.json

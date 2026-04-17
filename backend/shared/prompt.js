@@ -1,6 +1,6 @@
 export function buildPrompt({ productName, persona }) {
   return `
-You are ShopSense AI.
+You are LocalAiShopper AI.
 Analyze the product "${productName}" for the buyer persona "${persona}".
 
 Return strict JSON with this exact shape:

@@ -27,9 +27,18 @@ function createFallback(productName, persona, provider) {
 }
 
 export async function analyzeProduct({ productName, persona }) {
-  const provider = await getAiProvider();
-  const prompt = buildPrompt({ productName, persona });
-  const rawText = await provider.generate(prompt);
+  let provider;
+  let rawText = '';
+
+  try {
+    provider = await getAiProvider();
+    const prompt = buildPrompt({ productName, persona });
+    rawText = await provider.generate(prompt);
+  } catch (error) {
+    const providerName = provider?.name || (process.env.AI_PROVIDER || 'local-model');
+    console.warn('[analyzeProduct] Provider failure, using fallback:', error instanceof Error ? error.message : error);
+    return createFallback(productName, persona, providerName);
+  }
 
   try {
     const parsed = parseJsonResponse(rawText);

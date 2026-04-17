@@ -1,10 +1,9 @@
 import express from 'express';
 import path from 'path';
 import { analyzeProduct, analyzeProducts } from './analyzeProduct.js';
-import { getGeminiPoolStats } from './providers/gemini.js';
 import { advisePhonePurchase } from './phoneAdvisor.js';
 import { discoverVariants } from './variantDiscovery.js';
-import { getAllSourceNames } from './sourceRegistry.js';
+import { getAllSourceNames, SUPPORTED_CATEGORIES } from './sourceRegistry.js';
 
 /**
  * @param {string} repoRoot Absolute path to repository root (where `dist/` is written).
@@ -16,29 +15,26 @@ export function buildApp(repoRoot) {
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/api/health', (_req, res) => {
-    const provider = (process.env.AI_PROVIDER || 'gemini').toLowerCase();
-    let geminiStats = { keyCount: 0, maxConcurrentAgents: 0 };
-    if (provider === 'gemini') {
-      try {
-        geminiStats = getGeminiPoolStats();
-      } catch {
-        geminiStats = { keyCount: 0, maxConcurrentAgents: 0, configured: false };
-      }
-    }
+    const provider = (process.env.AI_PROVIDER || 'ollama').toLowerCase();
+    const ollamaInfo = {
+      model: process.env.OLLAMA_MODEL || 'qwen2.5',
+      baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+    };
     res.json({
       ok: true,
       provider,
-      gemini: geminiStats,
+      ollama: ollamaInfo,
+      supportedCategories: SUPPORTED_CATEGORIES,
       sources: getAllSourceNames(),
     });
   });
 
   app.get('/api/user', (_req, res) => {
     res.json({
-      name: 'ShopSense user',
-      email: 'local@shopsense.local',
+      name: 'LocalAiShopper user',
+      email: 'local@localaishopper.local',
       plan: 'Free',
-      avatar: 'SS',
+      avatar: 'LA',
       member_since: new Date().getFullYear().toString(),
     });
   });
@@ -54,7 +50,7 @@ export function buildApp(repoRoot) {
       return res.status(400).json({ error: 'brand and model are required.' });
     }
 
-    const validCategories = ['phone', 'laptop', 'tablet'];
+    const validCategories = SUPPORTED_CATEGORIES;
     if (!validCategories.includes(category)) {
       return res.status(400).json({
         error: `category must be one of: ${validCategories.join(', ')}`,
@@ -108,6 +104,7 @@ export function buildApp(repoRoot) {
       return res.status(400).json({ error: 'productNames must contain valid product names.' });
     }
 
+
     try {
       const results = await analyzeProducts({
         productNames: cleanedNames,
@@ -130,13 +127,12 @@ export function buildApp(repoRoot) {
     const model = typeof body.model === 'string' ? body.model.trim() : '';
     const ram = typeof body.ram === 'string' ? body.ram.trim() : '';
     const storage = typeof body.storage === 'string' ? body.storage.trim() : '';
-    const budget = Number(body.budget || 0);
-    const manualPrice = Number(body.manualPrice || 0);
     const category = typeof body.category === 'string' ? body.category.trim().toLowerCase() : 'phone';
+    const directUrl = typeof body.directUrl === 'string' ? body.directUrl.trim() : '';
 
-    if (!brand || !model || !ram || !storage) {
+    if (!brand || !model) {
       return res.status(400).json({
-        error: 'brand, model, ram, and storage are required.',
+        error: 'brand and model are required.',
       });
     }
 
@@ -144,11 +140,12 @@ export function buildApp(repoRoot) {
       const result = await advisePhonePurchase({
         brand,
         model,
-        ram,
-        storage,
-        budget: Number.isFinite(budget) ? budget : 0,
-        manualPrice: Number.isFinite(manualPrice) && manualPrice > 0 ? manualPrice : 0,
+        ram: ram || 'Unknown',
+        storage: storage || 'Unknown',
+        budget: 0,
+        manualPrice: 0,
         category,
+        directUrl,
       });
       return res.json(result);
     } catch (error) {

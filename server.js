@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 
 dotenv.config();
 if (!process.env.AI_PROVIDER) {
-  process.env.AI_PROVIDER = 'gemini';
+  process.env.AI_PROVIDER = 'lmstudio';
 }
 
 const repoRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -14,7 +14,7 @@ const port = Number(process.env.PORT || 5000);
 
 if (!process.env.VERCEL) {
   app.listen(port, () => {
-    console.log(`ShopSense running on http://localhost:${port}`);
+    console.log(`LocalAiShopper running on http://localhost:${port}`);
   });
 }
 

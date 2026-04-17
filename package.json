@@ -1,18 +1,26 @@
 {
-  "name": "shopsense-unified",
-  "private": true,
+  "name": "local-ai-shopper",
+  "version": "1.0.0",
+  "description": "A privacy-focused product analysis engine using local AI models and headless browser scraping.",
+  "private": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adadaabhay/LocalAiShopper.git"
+  },
+  "bugs": {
+    "url": "https://github.com/adadaabhay/LocalAiShopper/issues"
+  },
+  "homepage": "https://github.com/adadaabhay/LocalAiShopper#readme",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "npx concurrently \"vite\" \"npm run start\"",
     "build": "vite build",
     "vercel-build": "vite build",
     "start": "node server.js",
-    "start:gemini": "node backend/gemini/server.js",
-    "start:showcase": "node backend/gemini/server.js",
+    "coder": "node local-coder.js",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.21.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "cheerio": "^1.1.2",
@@ -32,6 +40,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "concurrently": "^9.2.1",
     "playwright": "^1.59.1",
     "typescript": "~5.8.2"
   },

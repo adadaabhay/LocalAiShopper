@@ -1,7 +1,7 @@
 import type { ProductCategory } from './constants';
 
 export type BriefScores = {
-  // Phone scores
+  // Mobile scores
   camera?: number;
   performance: number;
   durability?: number;
@@ -11,6 +11,9 @@ export type BriefScores = {
   display?: number;
   keyboard?: number;
   buildQuality?: number;
+  // Generic electronics scores
+  value?: number;
+  brandSupport?: number;
 };
 
 export type HardwareBenchmark = {
@@ -23,6 +26,7 @@ export type DiscoveredVariant = {
   ram: string;
   storage: string;
   processor: string | null;
+  url?: string;
   priceRange: {
     min: number | null;
     max: number | null;
@@ -36,6 +40,7 @@ export type DiscoveryResult = {
   category: ProductCategory;
   variants: DiscoveredVariant[];
   sources: string[];
+  sourcesTried: string[];
   totalSourcesTried: number;
   fetchedAt: string;
 };
@@ -84,4 +89,16 @@ export type PhoneAdvice = {
   }>;
   alternatives: Array<{ model: string; why: string; estimatedPriceLabel: string }>;
   cautions: string[];
+  reviews?: {
+    averageScore10: number | null;
+    verifiedSourceCount: number;
+    sources: Array<{
+      source: string;
+      score10: number;
+      evidenceType: 'structured' | 'text';
+      verified: boolean;
+      url: string;
+    }>;
+    blendPolicy: string;
+  };
 };

@@ -1,7 +1,8 @@
 import { getAiProvider } from './providers/index.js';
-import { scrapePhoneOffers } from './scrapeOffers.js';
+import { scrapePhoneOffers, scrapeDirectOffer } from './scrapeOffers.js';
 import { confirmOfferVariants } from './offerVariantConfirm.js';
 import { updatePriceHistory } from './priceHistory.js';
+import { fetchReviewSignals } from './reviewSignals.js';
 
 function extractFirstJsonObject(text) {
   const cleaned = text.replace(/```json/gi, '').replace(/```/g, '').trim();
@@ -25,6 +26,10 @@ function median(values) {
 function normalizeGbMb(value) {
   if (!value || typeof value !== 'string') return '';
   return value.replace(/\s+/g, '').toUpperCase();
+}
+
+function isMobileCategory(category) {
+  return category === 'phone' || category === 'tablet' || category === 'smartwatch';
 }
 
 // ── Category-aware heuristic scoring ──────────────────────────────────
@@ -79,11 +84,62 @@ function computeLaptopHeuristicScores({ ram, storage, bestPrice, budget }) {
   };
 }
 
+function computeGenericHeuristicScores({ bestPrice, budget, category }) {
+  const budgetSafety = budget > 0 ? Math.max(0, Math.min(100, (budget / Math.max(bestPrice, 1)) * 100)) : 70;
+  const categoryBias =
+    category === 'tv' ? 6 : category === 'camera' ? 8 : category === 'console' ? 7 : category === 'monitor' ? 5 : 4;
+  const performance = Math.min(100, 55 + categoryBias);
+  const value = Math.round((performance * 0.42 + budgetSafety * 0.58) * 10) / 10;
+  const buildQuality = Math.min(100, 58 + categoryBias);
+  const reliability = Math.min(100, 60 + Math.floor(categoryBias / 2));
+  const battery = category === 'tv' || category === 'monitor' || category === 'speaker' ? 0 : 64 + categoryBias;
+  const brandSupport = Math.min(100, 62 + categoryBias);
+
+  return {
+    overall: Math.round((performance * 0.35 + value * 0.3 + buildQuality * 0.2 + reliability * 0.15) * 10) / 10,
+    performance,
+    value,
+    buildQuality,
+    reliability,
+    battery,
+    brandSupport,
+  };
+}
+
 function computeHeuristicScores({ ram, storage, bestPrice, budget, category }) {
   if (category === 'laptop') {
     return computeLaptopHeuristicScores({ ram, storage, bestPrice, budget });
   }
-  return computePhoneHeuristicScores({ ram, storage, bestPrice, budget });
+  if (isMobileCategory(category)) {
+    return computePhoneHeuristicScores({ ram, storage, bestPrice, budget });
+  }
+  return computeGenericHeuristicScores({ bestPrice, budget, category });
+}
+
+function blendHeuristicWithReviews(heuristic, reviewSignals) {
+  const reviewScore10 = Number(reviewSignals?.averageScore10);
+  const isVerified = reviewSignals?.verifiedCount > 0;
+
+  if (!Number.isFinite(reviewScore10) || reviewScore10 <= 0) {
+    return heuristic;
+  }
+
+  const reviewScore100 = reviewScore10 * 10;
+  const blended = { ...heuristic };
+
+  // If reviews are verified, let real-world sentiment dominate (80% impact)
+  const revWeight = isVerified ? 0.8 : 0.4;
+  const heuristicWeight = 1 - revWeight;
+
+  blended.overall = Math.round((heuristic.overall * heuristicWeight + reviewScore100 * revWeight) * 10) / 10;
+  if (Number.isFinite(heuristic.value)) {
+    blended.value = Math.round((heuristic.value * 0.5 + reviewScore100 * 0.5) * 10) / 10;
+  }
+  if (Number.isFinite(heuristic.performance)) {
+    blended.performance = Math.round((heuristic.performance * 0.75 + reviewScore100 * 0.25) * 10) / 10;
+  }
+
+  return blended;
 }
 
 function clamp10(n) {
@@ -100,6 +156,15 @@ function briefScoresFromHeuristic(h, category) {
       keyboard: clamp10(h.keyboard / 10),
       battery: clamp10(h.battery / 10),
       buildQuality: clamp10(h.buildQuality / 10),
+    };
+  }
+  if (!isMobileCategory(category)) {
+    return {
+      value: clamp10(h.value / 10),
+      performance: clamp10(h.performance / 10),
+      buildQuality: clamp10(h.buildQuality / 10),
+      brandSupport: clamp10(h.brandSupport / 10),
+      battery: clamp10((h.battery || 0) / 10),
     };
   }
   return {
@@ -201,8 +266,59 @@ function defaultLaptopBenchmarks(h, input) {
   ];
 }
 
+function defaultGenericBenchmarks(h, input, category) {
+  const label = (category || 'product').toUpperCase();
+  const batteryScore = h.battery > 0 ? clamp10(h.battery / 10) : 0;
+
+  return [
+    {
+      area: 'Core performance',
+      score: clamp10(h.performance / 10),
+      detail: `${label} performance tier estimate for day-to-day and burst workloads.`,
+    },
+    {
+      area: 'Value for money',
+      score: clamp10(h.value / 10),
+      detail: 'Price-to-feature balance using the scraped listings and your budget.',
+    },
+    {
+      area: 'Build quality',
+      score: clamp10(h.buildQuality / 10),
+      detail: 'Expected fit/finish and materials for this product segment.',
+    },
+    {
+      area: 'Reliability',
+      score: clamp10(h.reliability / 10),
+      detail: 'Estimated long-run consistency and stability for this class of device.',
+    },
+    {
+      area: 'Brand support',
+      score: clamp10(h.brandSupport / 10),
+      detail: `Support confidence from ${(input.brand || '').split(' ')[0] || 'brand'} service norms.`,
+    },
+    {
+      area: batteryScore > 0 ? 'Battery profile' : 'Power efficiency',
+      score: batteryScore > 0 ? batteryScore : clamp10((h.reliability + h.value) / 20),
+      detail: batteryScore > 0
+        ? 'Battery life estimate for this category and price band.'
+        : 'Plugged-in efficiency estimate for non-battery-centric devices.',
+    },
+    {
+      area: 'Feature completeness',
+      score: clamp10((h.performance + h.buildQuality) / 20),
+      detail: 'How complete the overall spec set is likely to feel at this price.',
+    },
+    {
+      area: 'Purchase confidence',
+      score: clamp10(h.overall / 10),
+      detail: 'Combined readiness score from value, reliability, and build assumptions.',
+    },
+  ];
+}
+
 function defaultHardwareBenchmarks(h, input, category) {
   if (category === 'laptop') return defaultLaptopBenchmarks(h, input);
+  if (!isMobileCategory(category)) return defaultGenericBenchmarks(h, input, category);
   return defaultPhoneBenchmarks(h, input);
 }
 
@@ -219,6 +335,14 @@ function enrichAdvice(ai, heuristic, input, category) {
         keyboard: clamp10(b.keyboard),
         battery: clamp10(b.battery),
         buildQuality: clamp10(b.buildQuality ?? b.build_quality ?? b.build),
+      };
+    } else if (!isMobileCategory(category)) {
+      brief = {
+        value: clamp10(b.value),
+        performance: clamp10(b.performance),
+        buildQuality: clamp10(b.buildQuality ?? b.build_quality ?? b.build),
+        brandSupport: clamp10(b.brandSupport ?? b.brand_support ?? b.support),
+        battery: clamp10(b.battery),
       };
     } else {
       brief = {
@@ -244,7 +368,11 @@ function enrichAdvice(ai, heuristic, input, category) {
     }));
   }
 
-  return { ...base, briefScores: brief, hardwareBenchmarks: hw };
+  // Remove AI-generated alternatives and cautions — they hallucinate model names and prices.
+  // We always use our deterministic alternatives computed from real scraped offers instead.
+  const { alternatives: _aiAlts, cautions: _aiCautions, ...safeBase } = base;
+
+  return { ...safeBase, briefScores: brief, hardwareBenchmarks: hw, aiCautions: _aiCautions };
 }
 
 function summarizeOffersForPrompt(offers) {
@@ -261,7 +389,7 @@ function summarizeOffersForPrompt(offers) {
 
 function buildPhonePrompt({ input, variantMatchedOffersForPrompt, alternativesForPrompt, heuristic }) {
   return `
-You are ShopSense Android/Tablet Advisor.
+You are LocalAiShopper Mobile Advisor.
 Use the scraped offers and user preferences to generate concise buyer guidance.
 
 User input:
@@ -275,6 +403,9 @@ ${JSON.stringify(alternativesForPrompt, null, 2)}
 
 Heuristic score seed:
 ${JSON.stringify(heuristic, null, 2)}
+
+Important Context for unknown values:
+If the user input or offers suggest RAM or Storage is "Unknown", keep them unknown. Do not infer missing specs from memory and do not invent variant details.
 
 Return strict JSON only:
 {
@@ -318,13 +449,13 @@ Rules:
 - Your 'hardwareBenchmarks' array must contain exactly the 6 requested areas above!
 - Provide a clear, insightful 'detail' gist for every area explaining exactly why it received that score.
 - Keep alternatives and cautions to max 4.
-- IMPORTANT: Use official technical specs to inform your scores, no hallucination.
+- IMPORTANT: Use only the provided variant data and general category knowledge. Never invent missing specs or exact technical details.
 `.trim();
 }
 
 function buildLaptopPrompt({ input, variantMatchedOffersForPrompt, alternativesForPrompt, heuristic }) {
   return `
-You are ShopSense Laptop Advisor.
+You are LocalAiShopper Laptop Advisor.
 Use the scraped offers and user preferences to generate concise buyer guidance.
 
 User input:
@@ -338,6 +469,9 @@ ${JSON.stringify(alternativesForPrompt, null, 2)}
 
 Heuristic score seed:
 ${JSON.stringify(heuristic, null, 2)}
+
+Important Context for unknown values:
+If the user input or offers suggest RAM or Storage is "Unknown", keep them unknown. Do not infer missing specs from memory and do not invent variant details.
 
 Return strict JSON only:
 {
@@ -381,13 +515,84 @@ Rules:
 - Your 'hardwareBenchmarks' array must contain exactly the 6 requested areas above!
 - Provide a clear, insightful 'detail' gist for every area explaining exactly why it received that score.
 - Keep alternatives and cautions to max 4.
-- IMPORTANT: Use official technical specs to inform your scores, no hallucination.
+- IMPORTANT: Use only the provided variant data and general category knowledge. Never invent missing specs or exact technical details.
+`.trim();
+}
+
+function buildGenericPrompt({ input, variantMatchedOffersForPrompt, alternativesForPrompt, heuristic, category }) {
+  return `
+You are LocalAiShopper Electronics Advisor.
+Category: ${category}
+Use scraped offers and user preferences to generate concise buyer guidance.
+
+User input:
+${JSON.stringify(input, null, 2)}
+
+Variant-matched offers:
+${JSON.stringify(variantMatchedOffersForPrompt, null, 2)}
+
+Possible alternatives:
+${JSON.stringify(alternativesForPrompt, null, 2)}
+
+Heuristic score seed:
+${JSON.stringify(heuristic, null, 2)}
+
+Return strict JSON only:
+{
+  "insight": "string",
+  "buyVerdict": "Buy now|Wait|Track price",
+  "briefScores": {
+    "value": 0,
+    "performance": 0,
+    "buildQuality": 0,
+    "brandSupport": 0,
+    "battery": 0
+  },
+  "hardwareBenchmarks": [
+    { "area": "Core performance", "score": 0, "detail": "string" },
+    { "area": "Value for money", "score": 0, "detail": "string" },
+    { "area": "Build quality", "score": 0, "detail": "string" },
+    { "area": "Reliability", "score": 0, "detail": "string" },
+    { "area": "Brand support", "score": 0, "detail": "string" },
+    { "area": "Power profile", "score": 0, "detail": "string" }
+  ],
+  "benchmarks": [
+    { "metric": "Overall Value", "score": 0, "note": "string" },
+    { "metric": "Performance", "score": 0, "note": "string" },
+    { "metric": "Build", "score": 0, "note": "string" },
+    { "metric": "Reliability", "score": 0, "note": "string" },
+    { "metric": "Support", "score": 0, "note": "string" },
+    { "metric": "Power", "score": 0, "note": "string" }
+  ],
+  "alternatives": [
+    {
+      "model": "string",
+      "why": "string",
+      "estimatedPriceLabel": "string"
+    }
+  ],
+  "cautions": ["string"]
+}
+
+Rules:
+- Keep every score on a strict 0 to 10 scale.
+- Keep alternatives and cautions to max 4.
+- Use only the scraped offer data and broad category-level assumptions.
 `.trim();
 }
 
 function buildAdvisorPrompt({ input, variantMatchedOffersForPrompt, alternativesForPrompt, heuristic, category }) {
   if (category === 'laptop') {
     return buildLaptopPrompt({ input, variantMatchedOffersForPrompt, alternativesForPrompt, heuristic });
+  }
+  if (!isMobileCategory(category)) {
+    return buildGenericPrompt({
+      input,
+      variantMatchedOffersForPrompt,
+      alternativesForPrompt,
+      heuristic,
+      category,
+    });
   }
   return buildPhonePrompt({ input, variantMatchedOffersForPrompt, alternativesForPrompt, heuristic });
 }
@@ -435,10 +640,10 @@ function computeAlternativesDeterministic({ input, offers, budget }) {
   return picks;
 }
 
-function createFallbackAdvice({ heuristic, alternatives, input, category }) {
+function createFallbackAdvice({ heuristic, alternatives, input, category, hasLiveOffers = true }) {
   return {
     insight:
-      'This recommendation is generated from scraped prices plus heuristic scoring. Use it as a shortlist before final checkout.',
+      hasLiveOffers ? 'This recommendation is generated from scraped prices plus heuristic scoring. Use it as a shortlist before final checkout.' : 'No live matching offers were found for this exact variant right now. Treat these scores as provisional until listings appear.',
     buyVerdict: alternatives.length > 0 ? 'Track price' : 'Wait',
     briefScores: briefScoresFromHeuristic(heuristic, category),
     hardwareBenchmarks: defaultHardwareBenchmarks(heuristic, input, category),
@@ -453,7 +658,8 @@ function createFallbackAdvice({ heuristic, alternatives, input, category }) {
           { metric: 'Build Quality', score: heuristic.buildQuality, note: 'Build estimate from price tier.' },
           { metric: 'Keyboard', score: heuristic.keyboard, note: 'Keyboard quality estimate from price tier.' },
         ]
-      : [
+      : isMobileCategory(category)
+      ? [
           { metric: 'Overall', score: heuristic.overall, note: 'Balanced view from current variant and listed prices.' },
           { metric: 'Performance', score: heuristic.performance, note: 'Estimated using RAM and variant assumptions.' },
           { metric: 'Value', score: heuristic.value, note: 'Compares best listed price against your budget.' },
@@ -462,9 +668,56 @@ function createFallbackAdvice({ heuristic, alternatives, input, category }) {
           { metric: 'Display', score: heuristic.display, note: 'Estimated screen quality for this tier.' },
           { metric: 'Thermals', score: heuristic.thermals, note: 'General estimate based on performance envelope.' },
           { metric: 'Software', score: heuristic.software, note: 'Estimated based on device class and RAM tier.' },
+        ]
+      : [
+          { metric: 'Overall', score: heuristic.overall, note: 'Balanced view from listed prices and category assumptions.' },
+          { metric: 'Performance', score: heuristic.performance, note: 'Category-weighted estimate for this product class.' },
+          { metric: 'Value', score: heuristic.value, note: 'Compares best listed price against your budget.' },
+          { metric: 'Build quality', score: heuristic.buildQuality, note: 'Expected fit and finish from this segment.' },
+          { metric: 'Reliability', score: heuristic.reliability, note: 'Likely long-run stability for this category.' },
+          { metric: 'Brand support', score: heuristic.brandSupport, note: 'Service and support expectation for this OEM.' },
+          { metric: 'Power profile', score: heuristic.battery || 0, note: 'Battery score for portable products, efficiency for others.' },
         ],
     alternatives,
     cautions: ['Prices may change quickly. Verify listing details and seller rating before paying.'],
+  };
+}
+
+function createVerifiedReviewsMissingResponse({ input, category, fetchedAt, offers }) {
+  return {
+    provider: 'verified-review-gate',
+    category,
+    query: `${input.brand} ${input.model} ${input.ram} ${input.storage}`.trim(),
+    selectedVariant: {
+      brand: input.brand,
+      model: input.model,
+      ram: input.ram,
+      storage: input.storage,
+      budget: input.budget,
+    },
+    pricing: {
+      bestPriceValue: null,
+      bestPriceLabel: 'Unavailable',
+      medianPriceValue: null,
+      medianPriceLabel: 'Unavailable',
+      totalOffers: offers.length,
+      fetchedAt,
+    },
+    offers,
+    insight: 'Not found: verified review ratings were not available from trusted sources for this exact product.',
+    buyVerdict: 'Not found',
+    benchmarks: [],
+    alternatives: [],
+    cautions: [
+      'Not found: no structured verified review rating available from trusted review sources.',
+      'Try a more exact model name or provide a direct product URL.',
+    ],
+    reviews: {
+      averageScore10: null,
+      verifiedSourceCount: 0,
+      sources: [],
+      blendPolicy: 'Ratings are blocked when verified-review evidence is missing.',
+    },
   };
 }
 
@@ -472,8 +725,28 @@ export async function advisePhonePurchase(input) {
   const category = input.category || 'phone';
   const query = `${input.brand} ${input.model} ${input.ram} ${input.storage}`.trim();
   const pipeline = await scrapePhoneOffers(query, category);
-
-  const offers = Array.isArray(pipeline.offers) ? pipeline.offers : [];
+  const scrapedOffers = Array.isArray(pipeline.offers) ? pipeline.offers : [];
+  const directOffer = input.directUrl ? await scrapeDirectOffer(input.directUrl, category) : null;
+  const directFallback = input.directUrl
+    ? {
+        store: 'Direct URL',
+        sourceType: 'direct_link',
+        title: `${input.brand} ${input.model} (direct link)` .trim(),
+        priceValue: null,
+        priceLabel: 'Price not detected',
+        ram: input.ram || 'Unknown',
+        storage: input.storage || 'Unknown',
+        processor: null,
+        url: input.directUrl,
+        confidence: 'high',
+        trustScore: 0.9,
+        trustWeight: -2,
+        freshness: 'live',
+        variantConfirmed: true,
+        variantMode: 'unknown',
+      }
+    : null;
+  const offers = [...(directOffer ? [directOffer] : directFallback ? [directFallback] : []), ...scrapedOffers];
   const desiredRam = normalizeGbMb(input.ram);
   const desiredStorage = normalizeGbMb(input.storage);
 
@@ -540,7 +813,7 @@ export async function advisePhonePurchase(input) {
 
   const matchPriority = (mode) => (mode === 'strict' ? 0 : mode === 'partial' ? 1 : 2);
   const candidates = decoratedOffers
-    .filter((offer) => Number.isFinite(offer.priceValue))
+    .filter((offer) => Number.isFinite(offer.priceValue) || offer.sourceType === 'direct_link')
     .sort((a, b) => {
       const ap = matchPriority(a.variantMatchMode);
       const bp = matchPriority(b.variantMatchMode);
@@ -550,23 +823,43 @@ export async function advisePhonePurchase(input) {
       const bw = Number.isFinite(b.trustWeight) ? b.trustWeight : 1;
       if (aw !== bw) return aw - bw;
 
-      return a.priceValue - b.priceValue;
+      const av = Number.isFinite(a.priceValue) ? a.priceValue : Number.MAX_SAFE_INTEGER;
+      const bv = Number.isFinite(b.priceValue) ? b.priceValue : Number.MAX_SAFE_INTEGER;
+      return av - bv;
     });
 
   const strictMatches = candidates.filter((o) => o.variantMatchMode === 'strict');
   const partialMatches = candidates.filter((o) => o.variantMatchMode === 'partial');
   const baseOffers = strictMatches.length ? strictMatches : partialMatches.length ? partialMatches : candidates;
 
+  let reviewSignals = { averageScore10: null, verifiedCount: 0, signals: [] };
+  try {
+    reviewSignals = await fetchReviewSignals({
+      brand: input.brand,
+      model: input.model,
+      category,
+    });
+  } catch (error) {
+    console.warn('Review-signal fetch failed:', error?.message);
+  }
+
+  if (!reviewSignals || reviewSignals.verifiedCount === 0) {
+    console.warn('No verified review ratings found. Continuing with heuristic only.');
+    // Let the pipeline proceed with heuristic scores and AI analysis anyway.
+  }
+
+  const pricedOffers = baseOffers.map((offer) => offer.priceValue).filter((n) => Number.isFinite(n));
   const bestOffer = baseOffers[0];
-  const bestPrice = bestOffer?.priceValue ?? input.budget ?? 0;
-  const medianPrice = median(baseOffers.map((offer) => offer.priceValue).filter((n) => Number.isFinite(n)));
-  const heuristic = computeHeuristicScores({
+  const bestPrice = pricedOffers.length ? Math.min(...pricedOffers) : 0;
+  const medianPrice = median(pricedOffers);
+  const baseHeuristic = computeHeuristicScores({
     ram: input.ram,
     storage: input.storage,
     bestPrice,
     budget: input.budget ?? 0,
     category,
   });
+  const heuristic = blendHeuristicWithReviews(baseHeuristic, reviewSignals);
 
   let provider;
   try {
@@ -580,6 +873,7 @@ export async function advisePhonePurchase(input) {
     offers: candidates,
     budget: input.budget ?? 0,
   });
+  const hasLiveOffers = baseOffers.length > 0;
   const prompt = buildAdvisorPrompt({
     input,
     variantMatchedOffersForPrompt: summarizeOffersForPrompt(baseOffers),
@@ -589,7 +883,7 @@ export async function advisePhonePurchase(input) {
   });
 
   let aiAdvice;
-  if (provider) {
+  if (provider && hasLiveOffers) {
     try {
       const raw = await provider.generate(prompt);
       try {
@@ -618,6 +912,7 @@ ${raw}
       alternatives,
       input,
       category,
+      hasLiveOffers,
     });
   }
 
@@ -664,7 +959,27 @@ ${raw}
       variantMatchMode: offer.variantMatchMode,
       variantConfirmed: offer.variantConfirmed,
     })),
+    reviews: {
+      averageScore10: reviewSignals.averageScore10,
+      verifiedSourceCount: reviewSignals.verifiedCount,
+      sources: reviewSignals.signals.map((signal) => ({
+        source: signal.source,
+        score10: signal.score10,
+        evidenceType: signal.evidenceType,
+        verified: signal.verified,
+        url: signal.url,
+      })),
+      blendPolicy: 'When verified reviews are available, overall rating blends approximately 20% heuristic + 80% verified review signal.',
+    },
     trend,
     ...enriched,
+    // ALWAYS use deterministic alternatives from real scraped data, never AI hallucinations
+    alternatives,
+    // Merge AI cautions with a standard one
+    cautions: [
+      ...(Array.isArray(enriched.aiCautions) ? enriched.aiCautions.filter(c => typeof c === 'string' && c.length < 200) : []),
+      ...(reviewSignals.verifiedCount > 0 ? [] : ['No structured verified review rating was found for this product in the current fetch.']),
+      'Prices may change quickly. Verify listing details and seller rating before paying.',
+    ].slice(0, 4),
   };
 }

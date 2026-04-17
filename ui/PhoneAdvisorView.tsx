@@ -1,6 +1,6 @@
 import type { FormEvent } from 'react';
 import type { PhoneAdvice } from './types';
-import { defaultBrands, ramOptions, storageOptions } from './constants';
+import { getRamOptions, getStorageOptions } from './constants';
 
 export type PhoneAdvisorViewProps = {
   brand: string;
@@ -48,7 +48,7 @@ export function PhoneAdvisorView({
         <p className="eyebrow">Phone advisor pipeline</p>
         <h1>Pick variant. Track prices. Get decision-ready advice.</h1>
         <p className="lede">
-          Works with a cloud LLM (Gemini) or a local Ollama model. Pulls best-effort live offers from
+          Works with local models (LM Studio or Ollama) and Gemini. Pulls best-effort live offers from
           marketplaces and brand sources, then summarizes benchmarks, cautions, and alternatives.
         </p>
         <p className="provider-chip">Backend mode: {providerMode}</p>
@@ -67,7 +67,7 @@ export function PhoneAdvisorView({
           <label>
             RAM
             <select value={ram} onChange={(event) => setRam(event.target.value)}>
-              {ramOptions.map((option) => (
+              {getRamOptions('phone').map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
@@ -77,7 +77,7 @@ export function PhoneAdvisorView({
           <label>
             Storage
             <select value={storage} onChange={(event) => setStorage(event.target.value)}>
-              {storageOptions.map((option) => (
+              {getStorageOptions('phone').map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
